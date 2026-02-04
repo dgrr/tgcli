@@ -50,6 +50,7 @@ impl SocketResponse {
         }
     }
 
+    #[allow(dead_code)]
     pub fn ok_with_id(id: i64) -> Self {
         Self {
             ok: true,

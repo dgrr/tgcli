@@ -13,6 +13,7 @@ pub struct App {
     pub tg: TgClient,
     pub store: Store,
     pub store_dir: String,
+    #[allow(dead_code)]
     pub json: bool,
     pub updates_rx: Option<mpsc::UnboundedReceiver<UpdatesLike>>,
 }

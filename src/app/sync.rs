@@ -24,6 +24,7 @@ pub struct SyncOptions {
     pub mode: SyncMode,
     pub output: OutputMode,
     pub mark_read: bool,
+    #[allow(dead_code)]
     pub download_media: bool,
     pub enable_socket: bool,
     pub idle_exit_secs: u64,

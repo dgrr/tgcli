@@ -9,6 +9,7 @@ pub fn write_json<T: Serialize>(value: &T) -> Result<()> {
 }
 
 /// Write an error as JSON to stderr.
+#[allow(dead_code)]
 pub fn write_error_json(err: &anyhow::Error) -> Result<()> {
     let json = serde_json::json!({
         "error": format!("{:#}", err),
