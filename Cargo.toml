@@ -1,0 +1,31 @@
+[package]
+name = "tgrs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dario <me@dgrp.es>"]
+description = "Telegram CLI tool using grammers (pure Rust MTProto)"
+
+[[bin]]
+name = "tgrs"
+path = "src/main.rs"
+
+[dependencies]
+grammers-client = "0.8"
+grammers-session = "0.8"
+grammers-tl-types = "0.8"
+grammers-mtsender = "0.8"
+sqlite = "0.37"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+env_logger = "0.11"
+rpassword = "7"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
