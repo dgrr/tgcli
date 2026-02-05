@@ -11,10 +11,6 @@ pub struct CommonSyncArgs {
     #[arg(long, value_enum, default_value = "none")]
     pub output: out::OutputMode,
 
-    /// Full sync: fetch all messages (default: incremental, only new messages)
-    #[arg(long, default_value_t = false)]
-    pub full: bool,
-
     /// Download media files
     #[arg(long, default_value_t = false)]
     pub download_media: bool,
@@ -90,7 +86,6 @@ fn build_output_mode(common: &CommonSyncArgs) -> crate::app::sync::OutputMode {
 
 fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions {
     let output_mode = build_output_mode(common);
-    let incremental = !common.full;
 
     crate::app::sync::SyncOptions {
         output: output_mode,
@@ -99,7 +94,7 @@ fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions 
         ignore_chat_ids: common.ignore_chat_ids.clone(),
         ignore_channels: common.ignore_channels,
         show_progress: !common.no_progress,
-        incremental,
+        incremental: true, // Always incremental
         messages_per_chat: common.messages_per_chat,
         concurrency: common.concurrency,
     }
@@ -204,10 +199,8 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             // Default: sync both chats and messages
             let mut app = App::new(cli).await?;
             let opts = build_sync_options(&args.common);
-            let incremental = !args.common.full;
             let result = app.sync(opts).await?;
-            let mode_str = if incremental { "incremental" } else { "full" };
-            print_sync_result(&args.common, &result, mode_str);
+            print_sync_result(&args.common, &result, "incremental");
         }
     }
 

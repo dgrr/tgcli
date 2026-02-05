@@ -648,6 +648,9 @@ impl App {
         // Store dir for media paths (if download enabled later)
         let store_dir = self.store_dir.clone();
         let download_media = opts.download_media;
+        let incremental = opts.incremental;
+        let messages_per_chat = opts.messages_per_chat;
+        let output_mode = opts.output;
 
         // Progress output task
         let show_progress = opts.show_progress;
@@ -695,6 +698,7 @@ impl App {
                 let messages_fetched = messages_fetched.clone();
                 let cancel_token = cancellation_token.clone();
                 let cancelled_flag = cancelled.clone();
+                let chat_name_for_output = chat.name.clone();
 
                 async move {
                     let _permit = sem.acquire().await.unwrap();
@@ -746,7 +750,12 @@ impl App {
                     };
 
                     // Fetch messages
-                    let last_sync_id = chat.last_sync_message_id;
+                    // For incremental sync, use the stored checkpoint; for full sync, fetch all
+                    let last_sync_id = if incremental {
+                        chat.last_sync_message_id
+                    } else {
+                        None
+                    };
                     let mut message_iter = client.iter_messages(peer_ref);
                     let mut messages = Vec::new();
                     let mut highest_msg_id: Option<i64> = None;
@@ -773,7 +782,13 @@ impl App {
                                     }
                                 }
 
-                                if messages.len() >= INCREMENTAL_MAX_MESSAGES {
+                                // Limit messages: use messages_per_chat for full sync, INCREMENTAL_MAX for incremental
+                                let max_messages = if incremental {
+                                    INCREMENTAL_MAX_MESSAGES
+                                } else {
+                                    messages_per_chat
+                                };
+                                if messages.len() >= max_messages {
                                     break;
                                 }
 
@@ -813,7 +828,7 @@ impl App {
                                     (msg.media().map(|_| "media".to_string()), None)
                                 };
 
-                                messages.push(FetchedMessage {
+                                let fetched_msg = FetchedMessage {
                                     id: msg_id,
                                     sender_id,
                                     ts: msg_ts,
@@ -824,7 +839,39 @@ impl App {
                                     media_path,
                                     reply_to_id,
                                     topic_id,
-                                });
+                                };
+
+                                // Stream output immediately (before collecting all results)
+                                match output_mode {
+                                    OutputMode::Text => {
+                                        let output = SyncMessageOutput::new(
+                                            chat.id,
+                                            &chat_name_for_output,
+                                            &fetched_msg,
+                                            false,
+                                        );
+                                        println!("{}", output);
+                                    }
+                                    OutputMode::Json | OutputMode::Stream => {
+                                        use std::io::Write;
+                                        let output = SyncMessageOutput::new(
+                                            chat.id,
+                                            &chat_name_for_output,
+                                            &fetched_msg,
+                                            output_mode == OutputMode::Stream,
+                                        );
+                                        println!(
+                                            "{}",
+                                            serde_json::to_string(&output).unwrap_or_default()
+                                        );
+                                        if output_mode == OutputMode::Stream {
+                                            let _ = std::io::stdout().flush();
+                                        }
+                                    }
+                                    OutputMode::None => {}
+                                }
+
+                                messages.push(fetched_msg);
 
                                 messages_fetched.fetch_add(1, Ordering::Relaxed);
                             }
@@ -893,31 +940,8 @@ impl App {
 
             chats_processed += 1;
 
-            // Write messages to store
+            // Write messages to store (output was already streamed in the task)
             for msg in &result.messages {
-                // Output based on mode
-                match opts.output {
-                    OutputMode::Text => {
-                        let output =
-                            SyncMessageOutput::new(result.chat_id, &result.chat_name, msg, false);
-                        println!("{}", output);
-                    }
-                    OutputMode::Json | OutputMode::Stream => {
-                        use std::io::Write;
-                        let output = SyncMessageOutput::new(
-                            result.chat_id,
-                            &result.chat_name,
-                            msg,
-                            opts.output == OutputMode::Stream,
-                        );
-                        println!("{}", serde_json::to_string(&output).unwrap_or_default());
-                        if opts.output == OutputMode::Stream {
-                            let _ = std::io::stdout().flush();
-                        }
-                    }
-                    OutputMode::None => {}
-                }
-
                 self.store
                     .upsert_message(UpsertMessageParams {
                         id: msg.id,
