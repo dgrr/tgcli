@@ -20,6 +20,12 @@ pub enum MessagesCommand {
         /// Only messages before this time (RFC3339 or YYYY-MM-DD)
         #[arg(long)]
         before: Option<String>,
+        /// Chat IDs to exclude (repeatable)
+        #[arg(long = "ignore", value_name = "CHAT_ID")]
+        ignore_chats: Vec<i64>,
+        /// Exclude channels
+        #[arg(long)]
+        ignore_channels: bool,
     },
     /// Search messages (FTS5)
     Search {
@@ -37,6 +43,12 @@ pub enum MessagesCommand {
         /// Media type filter
         #[arg(long, name = "type")]
         media_type: Option<String>,
+        /// Chat IDs to exclude (repeatable)
+        #[arg(long = "ignore", value_name = "CHAT_ID")]
+        ignore_chats: Vec<i64>,
+        /// Exclude channels
+        #[arg(long)]
+        ignore_channels: bool,
     },
     /// Show message context around a message
     Context {
@@ -73,6 +85,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             limit,
             after,
             before,
+            ignore_chats,
+            ignore_channels,
         } => {
             let after_ts = after.as_deref().map(parse_time).transpose()?;
             let before_ts = before.as_deref().map(parse_time).transpose()?;
@@ -82,6 +96,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 limit: *limit,
                 after: after_ts,
                 before: before_ts,
+                ignore_chats: ignore_chats.clone(),
+                ignore_channels: *ignore_channels,
             })?;
 
             if cli.json {
@@ -118,6 +134,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             from,
             limit,
             media_type,
+            ignore_chats,
+            ignore_channels,
         } => {
             let msgs = store.search_messages(store::SearchMessagesParams {
                 query: query.clone(),
@@ -125,6 +143,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 from_id: *from,
                 limit: *limit,
                 media_type: media_type.clone(),
+                ignore_chats: ignore_chats.clone(),
+                ignore_channels: *ignore_channels,
             })?;
 
             if cli.json {

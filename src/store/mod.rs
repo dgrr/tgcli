@@ -47,6 +47,8 @@ pub struct ListMessagesParams {
     pub limit: i64,
     pub after: Option<DateTime<Utc>>,
     pub before: Option<DateTime<Utc>>,
+    pub ignore_chats: Vec<i64>,
+    pub ignore_channels: bool,
 }
 
 pub struct SearchMessagesParams {
@@ -55,6 +57,8 @@ pub struct SearchMessagesParams {
     pub from_id: Option<i64>,
     pub limit: i64,
     pub media_type: Option<String>,
+    pub ignore_chats: Vec<i64>,
+    pub ignore_channels: bool,
 }
 
 pub struct UpsertMessageParams {
@@ -352,21 +356,31 @@ impl Store {
         let mut binds: Vec<(String, Value)> = Vec::new();
 
         if let Some(chat_id) = p.chat_id {
-            conditions.push("chat_id = :chat_id".to_string());
+            conditions.push("m.chat_id = :chat_id".to_string());
             binds.push((":chat_id".to_string(), chat_id.into()));
         }
         if let Some(ref after) = p.after {
-            conditions.push("ts > :after".to_string());
+            conditions.push("m.ts > :after".to_string());
             binds.push((":after".to_string(), after.to_rfc3339().into()));
         }
         if let Some(ref before) = p.before {
-            conditions.push("ts < :before".to_string());
+            conditions.push("m.ts < :before".to_string());
             binds.push((":before".to_string(), before.to_rfc3339().into()));
+        }
+        for (i, ignore_id) in p.ignore_chats.iter().enumerate() {
+            let param = format!(":ignore_{}", i);
+            conditions.push(format!("m.chat_id != {}", param));
+            binds.push((param, (*ignore_id).into()));
+        }
+        if p.ignore_channels {
+            conditions.push("COALESCE(c.kind, '') != 'channel'".to_string());
         }
 
         let sql = format!(
-            "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
-             FROM messages WHERE {} ORDER BY ts DESC LIMIT :limit",
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id
+             FROM messages m
+             LEFT JOIN chats c ON c.id = m.chat_id
+             WHERE {} ORDER BY m.ts DESC LIMIT :limit",
             conditions.join(" AND ")
         );
         binds.push((":limit".to_string(), p.limit.into()));
@@ -407,12 +421,21 @@ impl Store {
             conditions.push("m.media_type = :media_type".to_string());
             binds.push((":media_type".to_string(), media_type.clone().into()));
         }
+        for (i, ignore_id) in p.ignore_chats.iter().enumerate() {
+            let param = format!(":ignore_{}", i);
+            conditions.push(format!("m.chat_id != {}", param));
+            binds.push((param, (*ignore_id).into()));
+        }
+        if p.ignore_channels {
+            conditions.push("COALESCE(c.kind, '') != 'channel'".to_string());
+        }
 
         let sql = format!(
             "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id,
                     snippet(messages_fts, 0, '»', '«', '…', 40) as snippet
              FROM messages m
              JOIN messages_fts ON messages_fts.rowid = m.rowid
+             LEFT JOIN chats c ON c.id = m.chat_id
              WHERE {} ORDER BY m.ts DESC LIMIT :limit",
             conditions.join(" AND ")
         );
@@ -433,25 +456,35 @@ impl Store {
 
     fn search_messages_like(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
         let pattern = format!("%{}%", p.query);
-        let mut conditions = vec!["text LIKE :pat".to_string()];
+        let mut conditions = vec!["m.text LIKE :pat".to_string()];
         let mut binds: Vec<(String, Value)> = vec![(":pat".to_string(), pattern.into())];
 
         if let Some(chat_id) = p.chat_id {
-            conditions.push("chat_id = :chat_id".to_string());
+            conditions.push("m.chat_id = :chat_id".to_string());
             binds.push((":chat_id".to_string(), chat_id.into()));
         }
         if let Some(from_id) = p.from_id {
-            conditions.push("sender_id = :from_id".to_string());
+            conditions.push("m.sender_id = :from_id".to_string());
             binds.push((":from_id".to_string(), from_id.into()));
         }
         if let Some(ref media_type) = p.media_type {
-            conditions.push("media_type = :media_type".to_string());
+            conditions.push("m.media_type = :media_type".to_string());
             binds.push((":media_type".to_string(), media_type.clone().into()));
+        }
+        for (i, ignore_id) in p.ignore_chats.iter().enumerate() {
+            let param = format!(":ignore_{}", i);
+            conditions.push(format!("m.chat_id != {}", param));
+            binds.push((param, (*ignore_id).into()));
+        }
+        if p.ignore_channels {
+            conditions.push("COALESCE(c.kind, '') != 'channel'".to_string());
         }
 
         let sql = format!(
-            "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
-             FROM messages WHERE {} ORDER BY ts DESC LIMIT :limit",
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id
+             FROM messages m
+             LEFT JOIN chats c ON c.id = m.chat_id
+             WHERE {} ORDER BY m.ts DESC LIMIT :limit",
             conditions.join(" AND ")
         );
         binds.push((":limit".to_string(), p.limit.into()));
