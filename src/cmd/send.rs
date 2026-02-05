@@ -102,7 +102,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         let mut app = App::new(cli).await?;
         let msg_id = app.send_sticker(args.to, sticker_id).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "sent": true,
                 "to": args.to,
@@ -124,7 +124,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_photo(args.to, photo_path, caption).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "sent": true,
                 "to": args.to,
@@ -146,7 +146,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_video(args.to, video_path, caption).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "sent": true,
                 "to": args.to,
@@ -168,7 +168,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_file(args.to, file_path, caption).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "sent": true,
                 "to": args.to,
@@ -190,7 +190,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_voice(args.to, voice_path, caption).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "sent": true,
                 "to": args.to,
@@ -229,7 +229,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         app.send_text(args.to, message).await?
     };
 
-    if cli.json {
+    if cli.output.is_json() {
         let mut json = serde_json::json!({
             "sent": true,
             "to": args.to,

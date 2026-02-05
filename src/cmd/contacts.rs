@@ -36,7 +36,7 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
         ContactsCommand::List { limit } => {
             let contacts = store.list_contacts(*limit).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&contacts)?;
             } else {
                 println!(
@@ -58,7 +58,7 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
         ContactsCommand::Search { query, limit } => {
             let contacts = store.search_contacts(query, *limit).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&contacts)?;
             } else {
                 println!(
@@ -81,7 +81,7 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
             let contact = store.get_contact(*id).await?;
             match contact {
                 Some(c) => {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&c)?;
                     } else {
                         println!("ID: {}", c.user_id);

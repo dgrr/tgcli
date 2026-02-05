@@ -25,7 +25,7 @@ pub async fn run(cli: &Cli, args: &TypingArgs) -> Result<()> {
     if args.cancel {
         app.cancel_typing(args.chat, args.topic).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             let mut json = serde_json::json!({
                 "typing": false,
                 "chat": args.chat,
@@ -41,7 +41,7 @@ pub async fn run(cli: &Cli, args: &TypingArgs) -> Result<()> {
     } else {
         app.set_typing(args.chat, args.topic).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             let mut json = serde_json::json!({
                 "typing": true,
                 "chat": args.chat,

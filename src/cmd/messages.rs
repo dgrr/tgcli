@@ -262,7 +262,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 .backfill_messages_with_progress(*chat, *topic, oldest_id, *limit, !*no_progress)
                 .await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "chat_id": chat,
                     "topic_id": topic,
@@ -328,7 +328,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     });
                     println!("{}", serde_json::to_string(&obj).unwrap_or_default());
                 }
-            } else if cli.json {
+            } else if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "messages": msgs,
                 }))?;
@@ -378,7 +378,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 let app = App::new(cli).await?;
                 let results = app.global_search(query, *chat, *limit as usize).await?;
 
-                if cli.json {
+                if cli.output.is_json() {
                     out::write_json(&serde_json::json!({
                         "messages": results,
                         "global": true,
@@ -421,7 +421,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     })
                     .await?;
 
-                if cli.json {
+                if cli.output.is_json() {
                     out::write_json(&serde_json::json!({
                         "messages": msgs,
                         "fts": store.has_fts(),
@@ -467,7 +467,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
         } => {
             let msgs = store.message_context(*chat, *id, *before, *after).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&msgs)?;
             } else {
                 println!(
@@ -498,7 +498,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             let msg = store.get_message(*chat, *id).await?;
             match msg {
                 Some(m) => {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&m)?;
                     } else {
                         println!("Chat: {}", m.chat_id);
@@ -534,7 +534,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             let deleted = app.delete_messages(*chat, ids).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "deleted": true,
                     "chat_id": chat,
@@ -561,7 +561,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             let new_msg_id = app.forward_message(*chat, *id, *to, *topic).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 let mut json = serde_json::json!({
                     "forwarded": true,
                     "from_chat": chat,
@@ -591,7 +591,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             app.edit_message(*chat, *id, text).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "edited": true,
                     "chat_id": chat,
@@ -612,7 +612,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             app.pin_message(*chat, *id, *silent, *pm_oneside).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "pinned": true,
                     "chat_id": chat,
@@ -632,7 +632,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             app.unpin_message(*chat, *id, *pm_oneside).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "unpinned": true,
                     "chat_id": chat,
@@ -656,7 +656,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             app.send_reaction(*chat, *msg_id, emoji, *remove).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "success": true,
                     "chat_id": chat,
@@ -688,7 +688,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 .download_media(*chat, *msg_id, output.as_deref())
                 .await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "success": true,
                     "chat_id": chat,

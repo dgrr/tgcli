@@ -258,7 +258,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 // Use local store
                 let chats = store.list_chats(query.as_deref(), *limit).await?;
 
-                if cli.json {
+                if cli.output.is_json() {
                     out::write_json(&chats)?;
                 } else {
                     println!("{:<12} {:<30} {:<16} LAST MESSAGE", "KIND", "NAME", "ID");
@@ -282,7 +282,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let chat = store.get_chat(*id).await?;
             match chat {
                 Some(c) => {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&c)?;
                     } else {
                         println!("ID: {}", c.id);
@@ -327,7 +327,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let messages_deleted = store.delete_messages_by_chat(*chat_id).await?;
             let chat_deleted = store.delete_chat(*chat_id).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "chat_id": chat_id,
                     "chat_name": chat_name,
@@ -426,7 +426,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 }
             }
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "chat_id": id,
                     "chat_name": chat_name,
@@ -490,7 +490,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let until_date = parse_ban_duration(duration)?;
             app.ban_user(*chat, *user, until_date).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "action": "ban",
                     "chat_id": chat,
@@ -513,7 +513,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             app.kick_user(*chat, *user).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "action": "kick",
                     "chat_id": chat,
@@ -527,7 +527,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             app.unban_user(*chat, *user).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "action": "unban",
                     "chat_id": chat,
@@ -541,7 +541,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             app.promote_user(*chat, *user, title.as_deref()).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "action": "promote",
                     "chat_id": chat,
@@ -561,7 +561,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             app.demote_user(*chat, *user).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "action": "demote",
                     "chat_id": chat,
@@ -575,7 +575,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             let results = app.search_chats(query, *limit).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "query": query,
                     "count": results.len(),
@@ -605,7 +605,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 .create_chat(name, r#type, description.as_deref())
                 .await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "created": true,
                     "id": result.id,
@@ -623,7 +623,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             let result = app.join_chat(link.as_deref(), username.as_deref()).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "joined": true,
                     "id": result.id,
@@ -641,7 +641,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             app.leave_chat(*id).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "left": true,
                     "chat_id": id,
@@ -668,7 +668,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
 
                 let result = app.create_invite_link(*id, expire_date, *limit).await?;
 
-                if cli.json {
+                if cli.output.is_json() {
                     out::write_json(&serde_json::json!({
                         "created": true,
                         "link": result.link,
@@ -687,7 +687,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             } else {
                 let link = app.get_invite_link(*id).await?;
 
-                if cli.json {
+                if cli.output.is_json() {
                     out::write_json(&serde_json::json!({
                         "link": link,
                     }))?;
@@ -701,7 +701,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let mute_until = parse_mute_duration(duration)?;
             app.mute_chat(*id, mute_until).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "muted": true,
                     "chat_id": id,
@@ -717,7 +717,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let app = App::new(cli).await?;
             app.unmute_chat(*id).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "unmuted": true,
                     "chat_id": id,
@@ -842,7 +842,7 @@ async fn list_folder_chats(
         tl::enums::messages::Dialogs::Dialogs(d) => (d.dialogs, d.users, d.chats),
         tl::enums::messages::Dialogs::Slice(d) => (d.dialogs, d.users, d.chats),
         tl::enums::messages::Dialogs::NotModified(_) => {
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&Vec::<FolderChat>::new())?;
             } else {
                 println!("No chats in folder {}", folder_id);
@@ -942,7 +942,7 @@ async fn list_folder_chats(
         });
     }
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&chats)?;
     } else {
         let folder_name = if folder_id == 1 {
@@ -1003,7 +1003,7 @@ async fn batch_archive(cli: &Cli, chat_ids: &[i64], archive: bool) -> Result<()>
 
     let action = if archive { "Archived" } else { "Unarchived" };
 
-    if cli.json {
+    if cli.output.is_json() {
         let results: Vec<_> = resolved_ids
             .iter()
             .map(|&id| {
@@ -1079,7 +1079,7 @@ async fn batch_pin(cli: &Cli, chat_ids: &[i64], pin: bool, folder_id: i32) -> Re
 
     let success_count = results.iter().filter(|(_, success, _)| *success).count();
 
-    if cli.json {
+    if cli.output.is_json() {
         let json_results: Vec<_> = results
             .iter()
             .map(|(id, success, error)| {

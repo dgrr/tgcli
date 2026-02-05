@@ -1,5 +1,28 @@
 use anyhow::Result;
+use clap::ValueEnum;
 use serde::Serialize;
+
+/// Output mode for CLI commands
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum OutputMode {
+    /// No output
+    None,
+    /// Human-readable text (default)
+    #[default]
+    Text,
+    /// JSON output
+    Json,
+}
+
+impl OutputMode {
+    pub fn is_json(&self) -> bool {
+        matches!(self, OutputMode::Json)
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, OutputMode::None)
+    }
+}
 
 /// Write JSON to stdout.
 pub fn write_json<T: Serialize>(value: &T) -> Result<()> {

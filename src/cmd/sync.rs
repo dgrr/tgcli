@@ -19,11 +19,7 @@ pub struct CommonSyncArgs {
     #[arg(long, default_value_t = false)]
     pub mark_read: bool,
 
-    /// Output mode: none, text, json
-    #[arg(long, default_value = "none")]
-    pub output: String,
-
-    /// Stream messages as JSONL (one JSON object per line, implies --output json)
+    /// Stream messages as JSONL (one JSON object per line)
     #[arg(long, default_value_t = false)]
     pub stream: bool,
 
@@ -71,20 +67,20 @@ pub struct SyncArgs {
     pub common: CommonSyncArgs,
 }
 
-fn build_output_mode(common: &CommonSyncArgs) -> crate::app::sync::OutputMode {
+fn build_output_mode(cli: &Cli, common: &CommonSyncArgs) -> crate::app::sync::OutputMode {
     if common.stream {
         crate::app::sync::OutputMode::Stream
     } else {
-        match common.output.as_str() {
-            "text" => crate::app::sync::OutputMode::Text,
-            "json" => crate::app::sync::OutputMode::Json,
-            _ => crate::app::sync::OutputMode::None,
+        match cli.output {
+            crate::out::OutputMode::Json => crate::app::sync::OutputMode::Json,
+            crate::out::OutputMode::Text => crate::app::sync::OutputMode::Text,
+            crate::out::OutputMode::None => crate::app::sync::OutputMode::None,
         }
     }
 }
 
-fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions {
-    let output_mode = build_output_mode(common);
+fn build_sync_options(cli: &Cli, common: &CommonSyncArgs) -> crate::app::sync::SyncOptions {
+    let output_mode = build_output_mode(cli, common);
     let incremental = !common.full;
 
     crate::app::sync::SyncOptions {
@@ -105,7 +101,7 @@ fn print_sync_result(
     result: &crate::app::sync::SyncResult,
     mode_str: &str,
 ) {
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "synced": true,
             "messages_stored": result.messages_stored,
@@ -184,21 +180,21 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         Some(SyncCommand::Chats { common }) => {
             // Sync chats only (no messages)
             let mut app = App::new(cli).await?;
-            let opts = build_sync_options(common);
+            let opts = build_sync_options(cli, common);
             let result = app.sync_chats(opts).await?;
             print_sync_result(cli, common, &result, "chats-only");
         }
         Some(SyncCommand::Msgs { common }) => {
             // Sync messages only from local chats (uses stored access_hash, no iter_dialogs)
             let mut app = App::new(cli).await?;
-            let opts = build_sync_options(common);
+            let opts = build_sync_options(cli, common);
             let result = app.sync_msgs(opts).await?;
             print_sync_result(cli, common, &result, "msgs-only");
         }
         None => {
             // Default: sync both chats and messages
             let mut app = App::new(cli).await?;
-            let opts = build_sync_options(&args.common);
+            let opts = build_sync_options(cli, &args.common);
             let incremental = !args.common.full;
             let result = app.sync(opts).await?;
             let mode_str = if incremental { "incremental" } else { "full" };

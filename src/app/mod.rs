@@ -49,7 +49,7 @@ impl App {
             tg,
             store,
             store_dir,
-            json: cli.json,
+            json: cli.output.is_json(),
             updates_rx: Some(updates_rx),
         })
     }
@@ -72,7 +72,7 @@ impl App {
             tg,
             store,
             store_dir,
-            json: cli.json,
+            json: cli.output.is_json(),
             updates_rx: Some(updates_rx),
         })
     }

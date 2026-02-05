@@ -33,7 +33,7 @@ pub async fn run(cli: &Cli, args: &ClearArgs) -> Result<()> {
     let counts = get_counts(&store, clear_chats, clear_contacts).await?;
 
     if counts.total() == 0 {
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "cleared": false,
                 "reason": "nothing to clear"
@@ -45,7 +45,7 @@ pub async fn run(cli: &Cli, args: &ClearArgs) -> Result<()> {
     }
 
     // Show what will be deleted
-    if !cli.json && !args.confirm {
+    if !cli.output.is_json() && !args.confirm {
         println!("This will delete:");
         if clear_chats {
             println!("  - {} messages", counts.messages);
@@ -72,7 +72,7 @@ pub async fn run(cli: &Cli, args: &ClearArgs) -> Result<()> {
     // Perform the deletion
     let deleted = clear_tables(&store, clear_chats, clear_contacts).await?;
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "cleared": true,
             "deleted": {

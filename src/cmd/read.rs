@@ -38,7 +38,7 @@ pub async fn run(cli: &Cli, args: &ReadArgs) -> Result<()> {
         // Mark all topics as read
         let count = app.mark_read_all_topics(args.chat).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "marked_read": true,
                 "topics_count": count
@@ -50,7 +50,7 @@ pub async fn run(cli: &Cli, args: &ReadArgs) -> Result<()> {
         // Mark a specific topic as read
         app.mark_read(args.chat, Some(topic_id)).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "marked_read": true,
                 "topic_id": topic_id
@@ -62,7 +62,7 @@ pub async fn run(cli: &Cli, args: &ReadArgs) -> Result<()> {
         // Mark the whole chat as read (or a single topic if --topic was given but not --all-topics)
         app.mark_read(args.chat, None).await?;
 
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({ "marked_read": true }))?;
         } else {
             println!("Marked as read.");

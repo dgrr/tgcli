@@ -167,7 +167,7 @@ async fn list_folders(cli: &Cli) -> Result<()> {
         }
     }
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&folders)?;
     } else {
         println!(
@@ -276,7 +276,7 @@ async fn create_folder(
 
     app.tg.client.invoke(&create_request).await?;
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "success": true,
             "id": new_id,
@@ -341,7 +341,7 @@ async fn delete_folder(cli: &Cli, folder_id: i32) -> Result<()> {
 
     app.tg.client.invoke(&delete_request).await?;
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "success": true,
             "id": folder_id,
@@ -416,7 +416,7 @@ async fn show_folder(cli: &Cli, folder_id: i32) -> Result<()> {
         }
     }
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "folder_id": folder_id,
             "title": title,
@@ -495,7 +495,7 @@ async fn add_to_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<()> {
                     || f.pinned_peers.iter().any(|p| peer_matches(p, chat_id));
 
                 if already_in {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&serde_json::json!({
                             "success": true,
                             "chat_id": chat_id,
@@ -551,7 +551,7 @@ async fn add_to_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<()> {
                     || c.pinned_peers.iter().any(|p| peer_matches(p, chat_id));
 
                 if already_in {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&serde_json::json!({
                             "success": true,
                             "chat_id": chat_id,
@@ -599,7 +599,7 @@ async fn add_to_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<()> {
         );
     }
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "success": true,
             "chat_id": chat_id,
@@ -648,7 +648,7 @@ async fn remove_from_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<(
                     || new_pinned_peers.len() < f.pinned_peers.len();
 
                 if !was_removed {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&serde_json::json!({
                             "success": true,
                             "chat_id": chat_id,
@@ -710,7 +710,7 @@ async fn remove_from_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<(
                     || new_pinned_peers.len() < c.pinned_peers.len();
 
                 if !was_removed {
-                    if cli.json {
+                    if cli.output.is_json() {
                         out::write_json(&serde_json::json!({
                             "success": true,
                             "chat_id": chat_id,
@@ -754,7 +754,7 @@ async fn remove_from_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<(
         );
     }
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "success": true,
             "chat_id": chat_id,

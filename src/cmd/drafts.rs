@@ -52,7 +52,7 @@ pub async fn run(cli: &Cli, cmd: &DraftsCommand) -> Result<()> {
                 });
             }
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "count": enriched.len(),
                     "drafts": enriched,
@@ -86,7 +86,7 @@ pub async fn run(cli: &Cli, cmd: &DraftsCommand) -> Result<()> {
 
             app.clear_draft(*chat).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "cleared": true,
                     "chat_id": chat,

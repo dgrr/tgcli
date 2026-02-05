@@ -15,9 +15,9 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "~/.tgcli")]
     pub store: String,
 
-    /// Output JSON instead of human-readable text
-    #[arg(long, global = true, default_value_t = false)]
-    pub json: bool,
+    /// Output mode: text (default), json, or none
+    #[arg(long, global = true, value_enum, default_value = "text")]
+    pub output: out::OutputMode,
 
     /// Command timeout in seconds (non-sync commands)
     #[arg(long, global = true, default_value = "300")]

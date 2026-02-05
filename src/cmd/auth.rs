@@ -63,7 +63,7 @@ async fn interactive_auth(cli: &Cli) -> Result<()> {
     match client.sign_in(&token, &code).await {
         Ok(user) => {
             let name = user.first_name().map(|s| s.to_string()).unwrap_or_default();
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "authenticated": true,
                     "user": name,
@@ -87,7 +87,7 @@ async fn interactive_auth(cli: &Cli) -> Result<()> {
                 .await
                 .context("Failed to verify 2FA password")?;
             let name = user.first_name().map(|s| s.to_string()).unwrap_or_default();
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "authenticated": true,
                     "user": name,
@@ -109,7 +109,7 @@ async fn status(cli: &Cli) -> Result<()> {
     let session_path = format!("{}/session.db", store_dir);
 
     if !std::path::Path::new(&session_path).exists() {
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "authenticated": false,
             }))?;
@@ -122,7 +122,7 @@ async fn status(cli: &Cli) -> Result<()> {
     match App::new_unauthed(cli).await {
         Ok(app) => {
             let authed = app.tg.client.is_authorized().await?;
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "authenticated": authed,
                 }))?;
@@ -133,7 +133,7 @@ async fn status(cli: &Cli) -> Result<()> {
             }
         }
         Err(_) => {
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "authenticated": false,
                     "error": "Failed to connect",
@@ -164,7 +164,7 @@ async fn logout(cli: &Cli) -> Result<()> {
     // Remove session file
     let _ = std::fs::remove_file(&session_path);
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({ "logged_out": true }))?;
     } else {
         println!("Logged out.");

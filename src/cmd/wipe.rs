@@ -18,7 +18,7 @@ pub async fn run(cli: &Cli, args: &WipeArgs) -> Result<()> {
     let db_path = PathBuf::from(&store_dir).join("tgcli.db");
 
     if !db_path.exists() {
-        if cli.json {
+        if cli.output.is_json() {
             out::write_json(&serde_json::json!({
                 "wiped": false,
                 "reason": "database does not exist"
@@ -33,7 +33,7 @@ pub async fn run(cli: &Cli, args: &WipeArgs) -> Result<()> {
     let db_size = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
 
     // Show what will be deleted and confirm
-    if !cli.json && !args.yes {
+    if !cli.output.is_json() && !args.yes {
         println!("This will delete tgcli.db ({}).", format_size(db_size));
         println!("Session and media will be preserved.");
         println!();
@@ -59,7 +59,7 @@ pub async fn run(cli: &Cli, args: &WipeArgs) -> Result<()> {
     let _ = fs::remove_file(&wal_path);
     let _ = fs::remove_file(&shm_path);
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "wiped": true,
             "deleted_size": db_size

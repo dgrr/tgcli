@@ -79,7 +79,7 @@ async fn create_poll(cli: &Cli, args: &CreateArgs) -> Result<()> {
         )
         .await?;
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "sent": true,
             "to": args.chat,
@@ -103,7 +103,7 @@ async fn vote_poll(cli: &Cli, args: &VoteArgs) -> Result<()> {
     app.vote_poll(args.chat, args.message, &args.options)
         .await?;
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "voted": true,
             "chat": args.chat,

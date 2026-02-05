@@ -83,7 +83,7 @@ pub async fn run(cli: &Cli, cmd: &ProfileCommand) -> Result<()> {
                 premium: is_premium,
             };
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&profile)?;
             } else {
                 println!("ID: {}", profile.id);
@@ -190,7 +190,7 @@ pub async fn run(cli: &Cli, cmd: &ProfileCommand) -> Result<()> {
                 );
             }
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "updated": true,
                     "changes": updated,

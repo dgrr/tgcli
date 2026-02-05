@@ -58,7 +58,7 @@ pub async fn run(cli: &Cli, cmd: &TopicsCommand) -> Result<()> {
 
             let topics = store.list_topics(*chat).await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "chat_id": chat,
                     "topics": topics,
@@ -114,7 +114,7 @@ pub async fn run(cli: &Cli, cmd: &TopicsCommand) -> Result<()> {
                 })
                 .await?;
 
-            if cli.json {
+            if cli.output.is_json() {
                 out::write_json(&serde_json::json!({
                     "chat_id": chat,
                     "topic_id": topic,

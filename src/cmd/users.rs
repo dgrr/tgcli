@@ -101,7 +101,7 @@ async fn show_user(cli: &Cli, user_id: i64) -> Result<()> {
         common_chats_count: full.common_chats_count,
     };
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&info)?;
     } else {
         println!("ID: {}", info.id);
@@ -188,7 +188,7 @@ async fn block_user(cli: &Cli, user_id: i64, block: bool) -> Result<()> {
 
     let action = if block { "Blocked" } else { "Unblocked" };
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "success": true,
             "user_id": user_id,

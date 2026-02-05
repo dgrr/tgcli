@@ -107,7 +107,7 @@ async fn list_sticker_packs(app: &App, cli: &Cli) -> Result<()> {
         })
         .collect();
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "count": packs.len(),
             "packs": packs,
@@ -194,7 +194,7 @@ async fn show_sticker_pack(app: &App, cli: &Cli, pack: &str) -> Result<()> {
         })
         .collect();
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "pack": pack,
             "title": set_title,
@@ -268,7 +268,7 @@ async fn search_stickers(app: &App, cli: &Cli, emoji: &str, limit: usize) -> Res
         })
         .collect();
 
-    if cli.json {
+    if cli.output.is_json() {
         out::write_json(&serde_json::json!({
             "emoji": emoji,
             "count": stickers.len(),
