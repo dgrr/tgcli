@@ -39,11 +39,11 @@ pub enum MessagesCommand {
         /// Limit results
         #[arg(long, default_value = "50")]
         limit: i64,
-        /// Only messages after this time (RFC3339, YYYY-MM-DD, 'today', or 'yesterday')
-        #[arg(long)]
+        /// Only messages after this time (RFC3339, YYYY-MM-DD, 'today', 'yesterday', or relative like '1 week ago')
+        #[arg(long, visible_alias = "since")]
         after: Option<String>,
-        /// Only messages before this time (RFC3339, YYYY-MM-DD, 'today', or 'yesterday')
-        #[arg(long)]
+        /// Only messages before this time (RFC3339, YYYY-MM-DD, 'today', 'yesterday', or relative like '1 week ago')
+        #[arg(long, visible_alias = "until")]
         before: Option<String>,
         /// Only messages from today
         #[arg(long)]
@@ -57,6 +57,9 @@ pub enum MessagesCommand {
         /// Exclude channels
         #[arg(long)]
         ignore_channels: bool,
+        /// Stream messages as JSONL (one JSON object per line)
+        #[arg(long)]
+        stream: bool,
     },
     /// Search messages (FTS5 for local, Telegram API for global)
     Search {
@@ -279,6 +282,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             before,
             ignore_chats,
             ignore_channels,
+            stream,
             ..
         } => {
             let after_ts = after.as_deref().map(parse_time).transpose()?;
@@ -296,7 +300,23 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 })
                 .await?;
 
-            if cli.json {
+            if *stream {
+                // Stream as JSONL (one JSON object per line)
+                for m in &msgs {
+                    let obj = serde_json::json!({
+                        "id": m.id,
+                        "chat_id": m.chat_id,
+                        "sender_id": m.sender_id,
+                        "from_me": m.from_me,
+                        "ts": m.ts.to_rfc3339(),
+                        "text": m.text,
+                        "media_type": m.media_type,
+                        "topic_id": m.topic_id,
+                        "reply_to_id": m.reply_to_id,
+                    });
+                    println!("{}", serde_json::to_string(&obj).unwrap_or_default());
+                }
+            } else if cli.json {
                 out::write_json(&serde_json::json!({
                     "messages": msgs,
                 }))?;
@@ -649,14 +669,104 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 }
 
 fn parse_time(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Duration, Local, NaiveTime, TimeZone};
+
+    let s_lower = s.to_lowercase();
+
+    // Handle relative time expressions
+    if s_lower == "today" {
+        let today = Local::now().date_naive();
+        return Ok(today.and_time(NaiveTime::MIN).and_utc());
+    }
+
+    if s_lower == "yesterday" {
+        let yesterday = Local::now().date_naive() - Duration::days(1);
+        return Ok(yesterday.and_time(NaiveTime::MIN).and_utc());
+    }
+
+    // Handle "N days ago", "N weeks ago", "N months ago", "N hours ago"
+    if s_lower.ends_with(" ago") {
+        let parts: Vec<&str> = s_lower
+            .trim_end_matches(" ago")
+            .split_whitespace()
+            .collect();
+        if parts.len() == 2 {
+            if let Ok(n) = parts[0].parse::<i64>() {
+                let unit = parts[1].trim_end_matches('s'); // Remove plural 's'
+                let duration = match unit {
+                    "second" => Duration::seconds(n),
+                    "minute" => Duration::minutes(n),
+                    "hour" => Duration::hours(n),
+                    "day" => Duration::days(n),
+                    "week" => Duration::weeks(n),
+                    "month" => Duration::days(n * 30), // Approximate
+                    "year" => Duration::days(n * 365), // Approximate
+                    _ => {
+                        anyhow::bail!(
+                            "Unknown time unit '{}'. Use: seconds, minutes, hours, days, weeks, months, years",
+                            parts[1]
+                        );
+                    }
+                };
+                return Ok(chrono::Utc::now() - duration);
+            }
+        }
+
+        // Handle "a week ago", "an hour ago"
+        if parts.len() == 2 && (parts[0] == "a" || parts[0] == "an") {
+            let unit = parts[1].trim_end_matches('s');
+            let duration = match unit {
+                "second" => Duration::seconds(1),
+                "minute" => Duration::minutes(1),
+                "hour" => Duration::hours(1),
+                "day" => Duration::days(1),
+                "week" => Duration::weeks(1),
+                "month" => Duration::days(30),
+                "year" => Duration::days(365),
+                _ => {
+                    anyhow::bail!(
+                        "Unknown time unit '{}'. Use: second, minute, hour, day, week, month, year",
+                        parts[1]
+                    );
+                }
+            };
+            return Ok(chrono::Utc::now() - duration);
+        }
+    }
+
     // Try RFC3339 first
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&chrono::Utc));
     }
+
     // Try YYYY-MM-DD
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         let dt = d.and_hms_opt(0, 0, 0).unwrap().and_utc();
         return Ok(dt);
     }
-    anyhow::bail!("Invalid time format: {} (use RFC3339 or YYYY-MM-DD)", s);
+
+    // Try YYYY-MM-DD HH:MM:SS
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Ok(Local
+            .from_local_datetime(&dt)
+            .unwrap()
+            .with_timezone(&chrono::Utc));
+    }
+
+    // Try YYYY-MM-DD HH:MM
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M") {
+        return Ok(Local
+            .from_local_datetime(&dt)
+            .unwrap()
+            .with_timezone(&chrono::Utc));
+    }
+
+    anyhow::bail!(
+        "Invalid time format: '{}'. Supported formats:\n  \
+         - RFC3339: 2024-01-15T10:30:00Z\n  \
+         - Date: 2024-01-15\n  \
+         - DateTime: 2024-01-15 10:30:00\n  \
+         - Relative: today, yesterday, 1 week ago, 3 days ago, 2 hours ago",
+        s
+    );
 }
