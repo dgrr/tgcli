@@ -85,12 +85,20 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             "per_chat": result.per_chat,
         }))?;
     } else if args.summary {
-        // Output summary for LLMs: chat_id and messages synced
+        // Output summary for LLMs: chat_id, messages synced, chat name
+        // For forums, also show topic breakdown
         for chat in &result.per_chat {
             println!(
                 "{}\t{}\t{}",
                 chat.chat_id, chat.messages_synced, chat.chat_name
             );
+            // Show topic breakdown for forums
+            for topic in &chat.topics {
+                println!(
+                    "  {}\t{}\t{}",
+                    topic.topic_id, topic.messages_synced, topic.topic_name
+                );
+            }
         }
         eprintln!(
             "Total: {} messages across {} chats",

@@ -117,12 +117,23 @@ fn mime_to_ext(mime: &str) -> String {
     .to_string()
 }
 
+/// Summary of messages synced for a forum topic
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TopicSyncSummary {
+    pub topic_id: i32,
+    pub topic_name: String,
+    pub messages_synced: u64,
+}
+
 /// Summary of messages synced for a single chat
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ChatSyncSummary {
     pub chat_id: i64,
     pub chat_name: String,
     pub messages_synced: u64,
+    /// For forum chats, breakdown by topic
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub topics: Vec<TopicSyncSummary>,
 }
 
 pub struct SyncResult {
@@ -264,6 +275,9 @@ impl App {
             let mut count = 0;
             let mut latest_ts: Option<DateTime<Utc>> = None;
             let mut highest_msg_id: Option<i64> = None;
+            // Track per-topic message counts for forums
+            let mut topic_counts: std::collections::HashMap<i32, u64> =
+                std::collections::HashMap::new();
 
             // For incremental sync, get the last synced message ID
             let last_sync_id = if opts.incremental {
@@ -324,6 +338,11 @@ impl App {
                 } else {
                     None
                 };
+
+                // Track per-topic counts for forums
+                if let Some(tid) = topic_id {
+                    *topic_counts.entry(tid).or_insert(0) += 1;
+                }
 
                 // Download media if enabled
                 let (media_type, media_path) = if opts.download_media {
@@ -433,20 +452,46 @@ impl App {
                 self.store.update_last_sync_message_id(id, high_id).await?;
             }
 
-            // Track per-chat summary if messages were synced
-            if count > 0 {
-                per_chat.push(ChatSyncSummary {
-                    chat_id: id,
-                    chat_name: name.clone(),
-                    messages_synced: count as u64,
-                });
-            }
-
-            // If it's a forum, sync topics
+            // If it's a forum, sync topics first so we can get names
             if is_forum {
                 if let Ok(topic_count) = self.sync_topics(id).await {
                     log::info!("Synced {} topics for forum chat {}", topic_count, id);
                 }
+            }
+
+            // Track per-chat summary if messages were synced
+            if count > 0 {
+                // Build topic summaries for forums
+                let topics = if is_forum && !topic_counts.is_empty() {
+                    let mut topic_summaries = Vec::new();
+                    for (tid, msg_count) in &topic_counts {
+                        let topic_name = self
+                            .store
+                            .get_topic(id, *tid)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|t| t.name.clone())
+                            .unwrap_or_else(|| format!("Topic {}", tid));
+                        topic_summaries.push(TopicSyncSummary {
+                            topic_id: *tid,
+                            topic_name,
+                            messages_synced: *msg_count,
+                        });
+                    }
+                    // Sort by message count descending
+                    topic_summaries.sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
+                    topic_summaries
+                } else {
+                    Vec::new()
+                };
+
+                per_chat.push(ChatSyncSummary {
+                    chat_id: id,
+                    chat_name: name.clone(),
+                    messages_synced: count as u64,
+                    topics,
+                });
             }
         }
 
@@ -492,6 +537,9 @@ impl App {
             let mut count = 0;
             let mut latest_ts: Option<DateTime<Utc>> = None;
             let mut highest_msg_id: Option<i64> = None;
+            // Track per-topic message counts for forums
+            let mut topic_counts: std::collections::HashMap<i32, u64> =
+                std::collections::HashMap::new();
 
             // For incremental sync, get the last synced message ID
             let last_sync_id = if opts.incremental {
@@ -554,6 +602,11 @@ impl App {
                     None
                 };
 
+                // Track per-topic counts for forums
+                if let Some(tid) = topic_id {
+                    *topic_counts.entry(tid).or_insert(0) += 1;
+                }
+
                 // Download media if enabled
                 let (media_type, media_path) = if opts.download_media {
                     self.download_message_media(&msg, id).await?
@@ -600,16 +653,7 @@ impl App {
                 self.store.update_last_sync_message_id(id, high_id).await?;
             }
 
-            // Track per-chat summary if messages were synced
-            if count > 0 {
-                per_chat.push(ChatSyncSummary {
-                    chat_id: id,
-                    chat_name: name.clone(),
-                    messages_synced: count as u64,
-                });
-            }
-
-            // If it's a forum, sync topics
+            // If it's a forum, sync topics first so we can get names
             if is_forum {
                 if let Ok(topic_count) = self.sync_topics(id).await {
                     log::info!(
@@ -618,6 +662,41 @@ impl App {
                         id
                     );
                 }
+            }
+
+            // Track per-chat summary if messages were synced
+            if count > 0 {
+                // Build topic summaries for forums
+                let topics = if is_forum && !topic_counts.is_empty() {
+                    let mut topic_summaries = Vec::new();
+                    for (tid, msg_count) in &topic_counts {
+                        let topic_name = self
+                            .store
+                            .get_topic(id, *tid)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|t| t.name.clone())
+                            .unwrap_or_else(|| format!("Topic {}", tid));
+                        topic_summaries.push(TopicSyncSummary {
+                            topic_id: *tid,
+                            topic_name,
+                            messages_synced: *msg_count,
+                        });
+                    }
+                    // Sort by message count descending
+                    topic_summaries.sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
+                    topic_summaries
+                } else {
+                    Vec::new()
+                };
+
+                per_chat.push(ChatSyncSummary {
+                    chat_id: id,
+                    chat_name: name.clone(),
+                    messages_synced: count as u64,
+                    topics,
+                });
             }
         }
 
