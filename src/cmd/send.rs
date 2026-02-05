@@ -27,6 +27,14 @@ pub struct SendArgs {
     #[arg(long, conflicts_with_all = ["sticker", "photo", "file", "voice"])]
     pub video: Option<PathBuf>,
 
+    /// Send a file as document (any file type, preserves original filename)
+    #[arg(long, conflicts_with_all = ["sticker", "photo", "video", "voice"])]
+    pub file: Option<PathBuf>,
+
+    /// Send an audio file as voice message (inline playback in Telegram)
+    #[arg(long, conflicts_with_all = ["sticker", "photo", "video", "file"])]
+    pub voice: Option<PathBuf>,
+
     /// Forum topic ID (for sending to a specific topic in a forum/supergroup)
     #[arg(long)]
     pub topic: Option<i32>,
@@ -83,6 +91,72 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
             }))?;
         } else {
             println!("Photo sent to {}", args.to);
+        }
+        return Ok(());
+    }
+
+    // Handle video sending
+    if let Some(ref video_path) = args.video {
+        if args.topic.is_some() {
+            anyhow::bail!("--topic is not supported with --video yet");
+        }
+        let mut app = App::new(cli).await?;
+        let caption = args.caption.as_deref().unwrap_or("");
+        let msg_id = app.send_video(args.to, video_path, caption).await?;
+
+        if cli.json {
+            out::write_json(&serde_json::json!({
+                "sent": true,
+                "to": args.to,
+                "id": msg_id,
+                "type": "video",
+            }))?;
+        } else {
+            println!("Video sent to {}", args.to);
+        }
+        return Ok(());
+    }
+
+    // Handle file (document) sending
+    if let Some(ref file_path) = args.file {
+        if args.topic.is_some() {
+            anyhow::bail!("--topic is not supported with --file yet");
+        }
+        let mut app = App::new(cli).await?;
+        let caption = args.caption.as_deref().unwrap_or("");
+        let msg_id = app.send_file(args.to, file_path, caption).await?;
+
+        if cli.json {
+            out::write_json(&serde_json::json!({
+                "sent": true,
+                "to": args.to,
+                "id": msg_id,
+                "type": "document",
+            }))?;
+        } else {
+            println!("File sent to {}", args.to);
+        }
+        return Ok(());
+    }
+
+    // Handle voice message sending
+    if let Some(ref voice_path) = args.voice {
+        if args.topic.is_some() {
+            anyhow::bail!("--topic is not supported with --voice yet");
+        }
+        let mut app = App::new(cli).await?;
+        let caption = args.caption.as_deref().unwrap_or("");
+        let msg_id = app.send_voice(args.to, voice_path, caption).await?;
+
+        if cli.json {
+            out::write_json(&serde_json::json!({
+                "sent": true,
+                "to": args.to,
+                "id": msg_id,
+                "type": "voice",
+            }))?;
+        } else {
+            println!("Voice message sent to {}", args.to);
         }
         return Ok(());
     }

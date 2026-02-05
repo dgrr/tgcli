@@ -4,11 +4,13 @@ use crate::store::UpsertMessageParams;
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
+use grammers_client::types::Attribute;
 use grammers_client::InputMessage;
 use grammers_session::defs::PeerRef;
 use grammers_tl_types as tl;
 use rand::Rng;
 use std::path::Path;
+use std::time::Duration;
 
 /// Decode a file_id string back to its components.
 /// Returns (doc_id, access_hash, file_reference)
@@ -500,6 +502,167 @@ impl App {
                 from_me: true,
                 text: caption.to_string(),
                 media_type: Some("photo".to_string()),
+                media_path: Some(path.to_string_lossy().to_string()),
+                reply_to_id: None,
+                topic_id: None,
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a video to a chat by ID, returns the message ID.
+    pub async fn send_video(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        // Upload the file
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context(format!("Failed to upload video '{}'", path.display()))?;
+
+        // Send as document with video attribute
+        let msg = self
+            .tg
+            .client
+            .send_message(
+                peer_ref,
+                InputMessage::new()
+                    .text(caption)
+                    .document(uploaded)
+                    .attribute(Attribute::Video {
+                        round_message: false,
+                        supports_streaming: true,
+                        duration: Duration::from_secs(0), // Duration unknown
+                        w: 0,
+                        h: 0,
+                    }),
+            )
+            .await
+            .context(format!("Failed to send video to chat {}", chat_id))?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg.id() as i64,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: caption.to_string(),
+                media_type: Some("video".to_string()),
+                media_path: Some(path.to_string_lossy().to_string()),
+                reply_to_id: None,
+                topic_id: None,
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a file as document to a chat by ID, returns the message ID.
+    /// Preserves the original filename.
+    pub async fn send_file(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        // Upload the file
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context(format!("Failed to upload file '{}'", path.display()))?;
+
+        // Send as document (grammers automatically preserves filename)
+        let msg = self
+            .tg
+            .client
+            .send_message(
+                peer_ref,
+                InputMessage::new().text(caption).document(uploaded),
+            )
+            .await
+            .context(format!("Failed to send file to chat {}", chat_id))?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg.id() as i64,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: caption.to_string(),
+                media_type: Some("document".to_string()),
+                media_path: Some(path.to_string_lossy().to_string()),
+                reply_to_id: None,
+                topic_id: None,
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg.id() as i64)
+    }
+
+    /// Send an audio file as a voice message to a chat by ID, returns the message ID.
+    /// Voice messages play inline in Telegram clients.
+    pub async fn send_voice(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        // Upload the file
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context(format!("Failed to upload voice file '{}'", path.display()))?;
+
+        // Send as document with voice attribute
+        let msg = self
+            .tg
+            .client
+            .send_message(
+                peer_ref,
+                InputMessage::new()
+                    .text(caption)
+                    .document(uploaded)
+                    .attribute(Attribute::Voice {
+                        duration: Duration::from_secs(0), // Duration unknown, Telegram will detect
+                        waveform: None,
+                    }),
+            )
+            .await
+            .context(format!("Failed to send voice message to chat {}", chat_id))?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg.id() as i64,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: caption.to_string(),
+                media_type: Some("voice".to_string()),
                 media_path: Some(path.to_string_lossy().to_string()),
                 reply_to_id: None,
                 topic_id: None,
