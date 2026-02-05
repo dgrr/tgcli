@@ -6,6 +6,7 @@ pub mod contacts;
 pub mod folders;
 pub mod messages;
 pub mod polls;
+pub mod profile;
 pub mod read;
 pub mod send;
 pub mod stickers;
@@ -72,6 +73,11 @@ pub enum Command {
     },
     /// Send typing indicator
     Typing(typing::TypingArgs),
+    /// View and update your profile
+    Profile {
+        #[command(subcommand)]
+        cmd: profile::ProfileCommand,
+    },
     /// Show version info
     Version,
     /// Generate shell completions
@@ -98,6 +104,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Folders { cmd } => folders::run(&cli, cmd).await,
         Command::Users { cmd } => users::run(&cli, cmd).await,
         Command::Typing(args) => typing::run(&cli, args).await,
+        Command::Profile { cmd } => profile::run(&cli, cmd).await,
         Command::Version => {
             version::run(&cli);
             Ok(())
