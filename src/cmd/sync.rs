@@ -34,6 +34,10 @@ pub struct SyncArgs {
     #[arg(long, default_value = "none")]
     pub output: String,
 
+    /// Stream messages as JSONL (one JSON object per line, implies --output json)
+    #[arg(long, default_value_t = false)]
+    pub stream: bool,
+
     /// Enable Unix socket for IPC
     #[arg(long, default_value_t = false)]
     pub socket: bool,
@@ -74,10 +78,14 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         crate::app::sync::SyncMode::Once
     };
 
-    let output_mode = match args.output.as_str() {
-        "text" => crate::app::sync::OutputMode::Text,
-        "json" => crate::app::sync::OutputMode::Json,
-        _ => crate::app::sync::OutputMode::None,
+    let output_mode = if args.stream {
+        crate::app::sync::OutputMode::Stream
+    } else {
+        match args.output.as_str() {
+            "text" => crate::app::sync::OutputMode::Text,
+            "json" => crate::app::sync::OutputMode::Json,
+            _ => crate::app::sync::OutputMode::None,
+        }
     };
 
     // --full overrides --incremental

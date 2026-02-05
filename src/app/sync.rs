@@ -24,6 +24,8 @@ pub enum OutputMode {
     None,
     Text,
     Json,
+    /// JSONL streaming (one JSON object per line, flushed immediately)
+    Stream,
 }
 
 pub struct SyncOptions {
@@ -329,6 +331,9 @@ impl App {
                     (msg.media().map(|_| "media".to_string()), None)
                 };
 
+                // Clone media_type for use in stream output after the move
+                let media_type_out = media_type.clone();
+
                 self.store
                     .upsert_message(UpsertMessageParams {
                         id: msg.id() as i64,
@@ -394,6 +399,22 @@ impl App {
                             "text": text,
                         });
                         println!("{}", serde_json::to_string(&obj).unwrap_or_default());
+                    }
+                    OutputMode::Stream => {
+                        use std::io::Write;
+                        let obj = serde_json::json!({
+                            "type": "message",
+                            "from_me": from_me,
+                            "sender_id": sender_id,
+                            "chat_id": id,
+                            "id": msg.id(),
+                            "ts": msg_ts.to_rfc3339(),
+                            "text": text,
+                            "topic_id": topic_id,
+                            "media_type": media_type_out,
+                        });
+                        println!("{}", serde_json::to_string(&obj).unwrap_or_default());
+                        let _ = std::io::stdout().flush();
                     }
                     OutputMode::None => {}
                 }
@@ -710,6 +731,9 @@ impl App {
                                         (msg.media().map(|_| "media".to_string()), None)
                                     };
 
+                                    // Clone for stream output
+                                    let media_type_out = media_type.clone();
+
                                     self.store
                                         .upsert_chat(
                                             chat_id,
@@ -775,6 +799,25 @@ impl App {
                                                 "{}",
                                                 serde_json::to_string(&obj).unwrap_or_default()
                                             );
+                                        }
+                                        OutputMode::Stream => {
+                                            use std::io::Write;
+                                            let obj = serde_json::json!({
+                                                "type": "message",
+                                                "from_me": false,
+                                                "sender_id": sender_id,
+                                                "chat_id": chat_id,
+                                                "id": msg.id(),
+                                                "ts": msg_ts.to_rfc3339(),
+                                                "text": text,
+                                                "topic_id": topic_id,
+                                                "media_type": media_type_out,
+                                            });
+                                            println!(
+                                                "{}",
+                                                serde_json::to_string(&obj).unwrap_or_default()
+                                            );
+                                            let _ = std::io::stdout().flush();
                                         }
                                         OutputMode::None => {}
                                     }
