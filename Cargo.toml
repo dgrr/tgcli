@@ -1,6 +1,6 @@
 [package]
 name = "tgcli"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 authors = ["Dario <me@dgrp.es>"]
 description = "Telegram CLI tool using grammers (pure Rust MTProto)"
@@ -32,7 +32,7 @@ env_logger = "0.11"
 rpassword = "7"
 base64 = "0.22"
 rand = "0.9.2"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
