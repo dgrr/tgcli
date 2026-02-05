@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod chats;
 pub mod contacts;
+pub mod folders;
 pub mod messages;
 pub mod read;
 pub mod send;
@@ -47,6 +48,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: topics::TopicsCommand,
     },
+    /// Manage chat folders (filters)
+    Folders {
+        #[command(subcommand)]
+        cmd: folders::FoldersCommand,
+    },
     /// Show version info
     Version,
 }
@@ -62,6 +68,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Read(args) => read::run(&cli, args).await,
         Command::Stickers { cmd } => stickers::run(&cli, cmd).await,
         Command::Topics { cmd } => topics::run(&cli, cmd).await,
+        Command::Folders { cmd } => folders::run(&cli, cmd).await,
         Command::Version => {
             version::run(&cli);
             Ok(())
