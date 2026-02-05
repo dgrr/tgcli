@@ -1,5 +1,4 @@
 pub mod send;
-pub mod socket;
 pub mod sync;
 
 use crate::store::Store;

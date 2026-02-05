@@ -209,38 +209,7 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         .as_ref()
         .expect("message required when no sticker");
 
-    // Try socket first (sync process may be running) - but not for topic/reply/scheduled messages
-    if args.topic.is_none()
-        && args.reply_to.is_none()
-        && schedule_time.is_none()
-        && crate::app::socket::is_socket_available(&store_dir)
-    {
-        let resp = crate::app::socket::send_request(
-            &store_dir,
-            crate::app::socket::SocketRequest::SendText {
-                to: args.to,
-                message: message.clone(),
-            },
-        )
-        .await?;
-
-        if resp.ok {
-            if cli.json {
-                out::write_json(&serde_json::json!({
-                    "sent": true,
-                    "to": args.to,
-                    "id": resp.id,
-                }))?;
-            } else {
-                println!("Sent to {} (via socket)", args.to);
-            }
-            return Ok(());
-        } else {
-            anyhow::bail!("Socket send failed: {}", resp.error.unwrap_or_default());
-        }
-    }
-
-    // Direct connection (required for topic/reply/scheduled messages)
+    // Direct connection
     let mut app = App::new(cli).await?;
 
     let msg_id = if let Some(topic_id) = args.topic {

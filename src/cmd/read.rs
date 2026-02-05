@@ -31,31 +31,7 @@ pub async fn run(cli: &Cli, args: &ReadArgs) -> Result<()> {
         anyhow::bail!("Cannot use both --topic and --all-topics at the same time");
     }
 
-    // Try socket first (but only for simple chat read, not topics)
-    if args.topic.is_none()
-        && !args.all_topics
-        && crate::app::socket::is_socket_available(&store_dir)
-    {
-        let resp = crate::app::socket::send_request(
-            &store_dir,
-            crate::app::socket::SocketRequest::MarkRead {
-                chat: args.chat,
-                message: args.message,
-            },
-        )
-        .await?;
-
-        if resp.ok {
-            if cli.json {
-                out::write_json(&serde_json::json!({ "marked_read": true }))?;
-            } else {
-                println!("Marked as read.");
-            }
-            return Ok(());
-        }
-    }
-
-    // Fallback: direct connection
+    // Direct connection
     let app = App::new(cli).await?;
 
     if args.all_topics {

@@ -34,10 +34,6 @@ pub struct SyncArgs {
     #[arg(long, default_value_t = false)]
     pub stream: bool,
 
-    /// Enable Unix socket for IPC
-    #[arg(long, default_value_t = false)]
-    pub socket: bool,
-
     /// Idle exit timeout in seconds (for --once mode)
     #[arg(long, default_value = "30")]
     pub idle_exit: u64,
@@ -82,7 +78,6 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         output: output_mode,
         mark_read: args.mark_read,
         download_media: args.download_media,
-        enable_socket: args.socket,
         idle_exit_secs: args.idle_exit,
         ignore_chat_ids: args.ignore_chat_ids.clone(),
         ignore_channels: args.ignore_channels,
