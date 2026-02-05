@@ -537,6 +537,22 @@ impl Store {
         }
     }
 
+    pub async fn list_contacts(&self, limit: Option<i64>) -> Result<Vec<Contact>> {
+        let query = match limit {
+            Some(l) => format!(
+                "SELECT user_id, username, first_name, last_name, phone FROM contacts ORDER BY first_name LIMIT {}",
+                l
+            ),
+            None => "SELECT user_id, username, first_name, last_name, phone FROM contacts ORDER BY first_name".to_string(),
+        };
+        let mut rows = self.conn.query(&query, ()).await?;
+        let mut contacts = Vec::new();
+        while let Some(row) = rows.next().await? {
+            contacts.push(row_to_contact(&row)?);
+        }
+        Ok(contacts)
+    }
+
     // --- Messages ---
 
     pub async fn upsert_message(&self, p: UpsertMessageParams) -> Result<()> {

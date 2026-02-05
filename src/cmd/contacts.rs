@@ -6,6 +6,12 @@ use clap::Subcommand;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ContactsCommand {
+    /// List all contacts
+    List {
+        /// Limit results
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     /// Search contacts
     Search {
         /// Search query
@@ -27,6 +33,28 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
     let store = Store::open(&cli.store_dir()).await?;
 
     match cmd {
+        ContactsCommand::List { limit } => {
+            let contacts = store.list_contacts(*limit).await?;
+
+            if cli.json {
+                out::write_json(&contacts)?;
+            } else {
+                println!(
+                    "{:<16} {:<20} {:<20} {:<16} USERNAME",
+                    "ID", "FIRST", "LAST", "PHONE"
+                );
+                for c in &contacts {
+                    println!(
+                        "{:<16} {:<20} {:<20} {:<16} {}",
+                        c.user_id,
+                        out::truncate(&c.first_name, 18),
+                        out::truncate(&c.last_name, 18),
+                        out::truncate(&c.phone, 14),
+                        c.username.as_deref().unwrap_or(""),
+                    );
+                }
+            }
+        }
         ContactsCommand::Search { query, limit } => {
             let contacts = store.search_contacts(query, *limit).await?;
 
