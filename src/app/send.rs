@@ -242,6 +242,32 @@ impl App {
         }
     }
 
+    /// Edit a message's text.
+    pub async fn edit_message(&self, chat_id: i64, msg_id: i64, new_text: &str) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let request = tl::functions::messages::EditMessage {
+            no_webpage: true,
+            invert_media: false,
+            peer: input_peer,
+            id: msg_id as i32,
+            message: Some(new_text.to_string()),
+            media: None,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            quick_reply_shortcut_id: None,
+        };
+
+        self.tg.client.invoke(&request).await?;
+
+        // Update local store
+        self.store.update_message_text(chat_id, msg_id, new_text).await?;
+
+        Ok(())
+    }
+
     /// Forward a message from one chat to another.
     /// Returns the new message ID in the destination chat.
     pub async fn forward_message(

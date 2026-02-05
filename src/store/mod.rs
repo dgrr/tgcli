@@ -857,6 +857,18 @@ impl Store {
         Ok(result)
     }
 
+    /// Update a message's text (for edits)
+    pub async fn update_message_text(&self, chat_id: i64, msg_id: i64, new_text: &str) -> Result<()> {
+        let edit_ts = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE messages SET text = ?1, edit_ts = ?2 WHERE chat_id = ?3 AND id = ?4",
+                (new_text, edit_ts.as_str(), chat_id, msg_id),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_message(&self, chat_id: i64, msg_id: i64) -> Result<Option<Message>> {
         let mut rows = self
             .conn

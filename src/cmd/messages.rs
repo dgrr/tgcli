@@ -111,6 +111,18 @@ pub enum MessagesCommand {
         #[arg(long)]
         to: i64,
     },
+    /// Edit a message's text
+    Edit {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID to edit
+        #[arg(long)]
+        id: i64,
+        /// New message text
+        #[arg(long)]
+        text: String,
+    },
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
@@ -376,6 +388,22 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     "Forwarded message {} from {} to {} (new ID: {})",
                     id, chat, to, new_msg_id
                 );
+            }
+        }
+        MessagesCommand::Edit { chat, id, text } => {
+            // Edit requires network access
+            let app = App::new(cli).await?;
+
+            app.edit_message(*chat, *id, text).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "edited": true,
+                    "chat_id": chat,
+                    "message_id": id,
+                }))?;
+            } else {
+                println!("Edited message {} in chat {}", id, chat);
             }
         }
     }
