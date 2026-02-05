@@ -67,7 +67,10 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
                     }
                 }
                 None => {
-                    anyhow::bail!("Contact {} not found", id);
+                    anyhow::bail!(
+                        "Contact {} not found. Run `tgcli sync` to refresh your contacts.",
+                        id
+                    );
                 }
             }
         }

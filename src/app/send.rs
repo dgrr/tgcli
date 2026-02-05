@@ -18,7 +18,7 @@ use tl::enums::SendMessageAction;
 fn decode_file_id(file_id: &str) -> Result<(i64, i64, Vec<u8>)> {
     let parts: Vec<&str> = file_id.split(':').collect();
     if parts.len() != 3 {
-        anyhow::bail!("Invalid file_id format. Expected doc_id:access_hash:file_ref_base64");
+        anyhow::bail!("Invalid sticker file_id format. Use `tgcli stickers show --pack <pack_name>` to get valid file IDs.");
     }
     let doc_id: i64 = parts[0].parse()?;
     let access_hash: i64 = parts[1].parse()?;
@@ -780,7 +780,10 @@ impl App {
                 return Ok(PeerRef::from(peer));
             }
         }
-        anyhow::bail!("Chat {} not found. Make sure you've synced first.", chat_id);
+        anyhow::bail!(
+            "Chat {} not found. Run `tgcli sync` to refresh your chat list.",
+            chat_id
+        );
     }
 
     /// Backfill (fetch older) messages for a chat.

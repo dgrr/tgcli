@@ -145,6 +145,9 @@ impl App {
                 return Ok(PeerRef::from(peer));
             }
         }
-        anyhow::bail!("Chat {} not found. Make sure you've synced first.", chat_id);
+        anyhow::bail!(
+            "Chat {} not found. Run `tgcli sync` to refresh your chat list.",
+            chat_id
+        );
     }
 }

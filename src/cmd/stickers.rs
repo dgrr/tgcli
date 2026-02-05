@@ -61,7 +61,7 @@ pub fn decode_file_id(file_id: &str) -> Result<(i64, i64, Vec<u8>)> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     let parts: Vec<&str> = file_id.split(':').collect();
     if parts.len() != 3 {
-        anyhow::bail!("Invalid file_id format. Expected doc_id:access_hash:file_ref_base64");
+        anyhow::bail!("Invalid sticker file_id format. Use `tgcli stickers show --pack <pack_name>` to get valid file IDs.");
     }
     let doc_id: i64 = parts[0].parse()?;
     let access_hash: i64 = parts[1].parse()?;

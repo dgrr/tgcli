@@ -310,7 +310,10 @@ async fn delete_folder(cli: &Cli, folder_id: i32) -> Result<()> {
     }
 
     if !found {
-        anyhow::bail!("Folder {} not found", folder_id);
+        anyhow::bail!(
+            "Folder {} not found. Run `tgcli folders list` to see available folders.",
+            folder_id
+        );
     }
 
     // Delete by calling UpdateDialogFilter with filter: None
@@ -372,8 +375,12 @@ async fn show_folder(cli: &Cli, folder_id: i32) -> Result<()> {
         }
     }
 
-    let (pinned_peers, include_peers, title) =
-        folder_filter.ok_or_else(|| anyhow::anyhow!("Folder {} not found", folder_id))?;
+    let (pinned_peers, include_peers, title) = folder_filter.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Folder {} not found. Run `tgcli folders list` to see available folders.",
+            folder_id
+        )
+    })?;
 
     // Collect peer IDs
     let mut chats: Vec<FolderChat> = Vec::new();
@@ -569,7 +576,10 @@ async fn add_to_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<()> {
     }
 
     if !found {
-        anyhow::bail!("Folder {} not found", folder_id);
+        anyhow::bail!(
+            "Folder {} not found. Run `tgcli folders list` to see available folders.",
+            folder_id
+        );
     }
 
     if cli.json {
@@ -721,7 +731,10 @@ async fn remove_from_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<(
     }
 
     if !found {
-        anyhow::bail!("Folder {} not found", folder_id);
+        anyhow::bail!(
+            "Folder {} not found. Run `tgcli folders list` to see available folders.",
+            folder_id
+        );
     }
 
     if cli.json {

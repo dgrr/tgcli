@@ -60,7 +60,9 @@ pub async fn run(cli: &Cli, cmd: &PollsCommand) -> Result<()> {
 async fn create_poll(cli: &Cli, args: &CreateArgs) -> Result<()> {
     // Validate options count
     if args.options.len() < 2 {
-        anyhow::bail!("Poll must have at least 2 options");
+        anyhow::bail!(
+            "Poll must have at least 2 options. Use --option multiple times to add options."
+        );
     }
     if args.options.len() > 10 {
         anyhow::bail!("Poll can have at most 10 options");

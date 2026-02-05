@@ -431,7 +431,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     }
                 }
                 None => {
-                    anyhow::bail!("Message {}/{} not found", chat, id);
+                    anyhow::bail!("Message {} not found in chat {}. The message may have been deleted or the chat needs to be synced.", id, chat);
                 }
             }
         }

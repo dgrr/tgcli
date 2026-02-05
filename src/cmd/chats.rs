@@ -166,7 +166,10 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     }
                 }
                 None => {
-                    anyhow::bail!("Chat {} not found", id);
+                    anyhow::bail!(
+                        "Chat {} not found. Run `tgcli sync` to refresh your chat list.",
+                        id
+                    );
                 }
             }
         }
@@ -231,7 +234,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 match app.tg.client.resolve_username(username).await? {
                     Some(peer) => PeerRef::from(peer),
                     None => {
-                        anyhow::bail!("Could not resolve username @{}", username);
+                        anyhow::bail!("Could not resolve username @{}. The username may not exist or may be misspelled.", username);
                     }
                 }
             } else {
@@ -579,7 +582,7 @@ async fn resolve_chat_to_input_peer(app: &App, chat_id: i64) -> Result<tl::enums
     }
 
     anyhow::bail!(
-        "Could not resolve chat {}. Make sure you've synced first.",
+        "Chat {} not found in your chat list. Run `tgcli sync` to refresh, or check that the chat ID is correct.",
         chat_id
     );
 }
