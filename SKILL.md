@@ -118,6 +118,22 @@ tgcli folders create "Name"                  # Create folder
 tgcli folders delete <id>                    # Delete folder
 ```
 
+### Daemon (Optional)
+
+The `daemon` command is **optional** — most use cases only need `sync`.
+
+Use `sync` for: periodic fetching, catching up, scripts, cron jobs.
+Use `daemon` for: instant notifications, real-time processing, live streaming.
+
+```bash
+tgcli daemon                                 # Listen for real-time updates
+tgcli daemon --stream                        # JSONL output for pipelines
+tgcli daemon --no-backfill                   # Skip background sync
+tgcli daemon --ignore <id>                   # Ignore specific chats
+tgcli daemon --ignore-channels               # Skip all channel updates
+tgcli daemon --quiet                         # Suppress progress output
+```
+
 ### Other
 
 ```bash

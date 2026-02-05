@@ -86,6 +86,38 @@ tgcli sync --no-progress
 tgcli sync --stream
 ```
 
+## Daemon (Optional)
+
+The `daemon` command is **optional** and only needed for real-time message capture.
+
+**When to use `sync` (most use cases):**
+- Periodic message fetching (cron, on-demand)
+- Catching up on missed messages
+- One-time data export
+- CLI workflows and scripts
+
+**When to use `daemon`:**
+- Instant notifications as messages arrive
+- Real-time message processing pipelines
+- Live message streaming to external systems
+- Continuous monitoring of specific chats
+
+```bash
+# Start daemon (listens for real-time updates)
+tgcli daemon
+
+# Daemon with JSONL output (for pipelines)
+tgcli daemon --stream
+
+# Skip background sync (pure real-time only)
+tgcli daemon --no-backfill
+
+# Ignore specific chats or all channels
+tgcli daemon --ignore 123456789 --ignore-channels
+```
+
+The daemon maintains a persistent connection to Telegram and stores messages instantly as they arrive. By default, it also runs a background incremental sync to catch any messages that arrived while offline.
+
 ## Architecture
 
 ```
