@@ -117,9 +117,18 @@ fn mime_to_ext(mime: &str) -> String {
     .to_string()
 }
 
+/// Summary of messages synced for a single chat
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChatSyncSummary {
+    pub chat_id: i64,
+    pub chat_name: String,
+    pub messages_synced: u64,
+}
+
 pub struct SyncResult {
     pub messages_stored: u64,
     pub chats_stored: u64,
+    pub per_chat: Vec<ChatSyncSummary>,
 }
 
 impl App {
@@ -190,6 +199,7 @@ impl App {
     pub async fn sync(&mut self, opts: SyncOptions) -> Result<SyncResult> {
         let mut messages_stored: u64 = 0;
         let mut chats_stored: u64 = 0;
+        let mut per_chat: Vec<ChatSyncSummary> = Vec::new();
 
         // Build ignore set for fast lookup.
         let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
@@ -423,6 +433,15 @@ impl App {
                 self.store.update_last_sync_message_id(id, high_id).await?;
             }
 
+            // Track per-chat summary if messages were synced
+            if count > 0 {
+                per_chat.push(ChatSyncSummary {
+                    chat_id: id,
+                    chat_name: name.clone(),
+                    messages_synced: count as u64,
+                });
+            }
+
             // If it's a forum, sync topics
             if is_forum {
                 if let Ok(topic_count) = self.sync_topics(id).await {
@@ -581,6 +600,15 @@ impl App {
                 self.store.update_last_sync_message_id(id, high_id).await?;
             }
 
+            // Track per-chat summary if messages were synced
+            if count > 0 {
+                per_chat.push(ChatSyncSummary {
+                    chat_id: id,
+                    chat_name: name.clone(),
+                    messages_synced: count as u64,
+                });
+            }
+
             // If it's a forum, sync topics
             if is_forum {
                 if let Ok(topic_count) = self.sync_topics(id).await {
@@ -605,6 +633,7 @@ impl App {
         Ok(SyncResult {
             messages_stored,
             chats_stored,
+            per_chat,
         })
     }
 

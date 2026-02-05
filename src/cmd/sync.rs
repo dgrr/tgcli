@@ -41,6 +41,10 @@ pub struct SyncArgs {
     /// Maximum messages per chat during full sync (default: 50)
     #[arg(long, default_value = "50")]
     pub messages_per_chat: usize,
+
+    /// Show summary of messages synced per chat (useful for LLMs)
+    #[arg(long, default_value_t = false)]
+    pub summary: bool,
 }
 
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
@@ -78,7 +82,21 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             "messages_stored": result.messages_stored,
             "chats_stored": result.chats_stored,
             "incremental": incremental,
+            "per_chat": result.per_chat,
         }))?;
+    } else if args.summary {
+        // Output summary for LLMs: chat_id and messages synced
+        for chat in &result.per_chat {
+            println!(
+                "{}\t{}\t{}",
+                chat.chat_id, chat.messages_synced, chat.chat_name
+            );
+        }
+        eprintln!(
+            "Total: {} messages across {} chats",
+            result.messages_stored,
+            result.per_chat.len()
+        );
     } else {
         let mode_str = if incremental { "incremental" } else { "full" };
         eprintln!(
