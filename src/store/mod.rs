@@ -22,6 +22,9 @@ pub struct Chat {
     pub is_forum: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sync_message_id: Option<i64>,
+    /// Peer access_hash for constructing InputPeer without session cache
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_hash: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +226,12 @@ impl Store {
             )
             .await;
 
+        // Add access_hash column if it doesn't exist (migration for local-only sync)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE chats ADD COLUMN access_hash INTEGER", ())
+            .await;
+
         self.conn
             .execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts)",
@@ -351,6 +360,7 @@ impl Store {
 
     // --- Chats ---
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_chat(
         &self,
         id: i64,
@@ -359,21 +369,23 @@ impl Store {
         username: Option<&str>,
         last_message_ts: Option<DateTime<Utc>>,
         is_forum: bool,
+        access_hash: Option<i64>,
     ) -> Result<()> {
         let ts_str = last_message_ts.map(|t| t.to_rfc3339());
         let is_forum_int = is_forum as i64;
         self.conn
             .execute(
-                "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum, access_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
                     kind = COALESCE(excluded.kind, kind),
                     name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
                     username = COALESCE(excluded.username, username),
                     last_message_ts = CASE WHEN excluded.last_message_ts IS NOT NULL AND (excluded.last_message_ts > last_message_ts OR last_message_ts IS NULL)
                         THEN excluded.last_message_ts ELSE last_message_ts END,
-                    is_forum = CASE WHEN excluded.is_forum = 1 THEN 1 ELSE is_forum END",
-                (id, kind, name, username, ts_str, is_forum_int),
+                    is_forum = CASE WHEN excluded.is_forum = 1 THEN 1 ELSE is_forum END,
+                    access_hash = COALESCE(excluded.access_hash, access_hash)",
+                (id, kind, name, username, ts_str, is_forum_int, access_hash),
             )
             .await?;
         Ok(())
@@ -387,7 +399,7 @@ impl Store {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id FROM chats
+                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash FROM chats
                      WHERE name LIKE ?1 OR username LIKE ?1
                      ORDER BY last_message_ts DESC LIMIT ?2",
                     (pattern.as_str(), limit),
@@ -400,7 +412,7 @@ impl Store {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id FROM chats
+                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash FROM chats
                      ORDER BY last_message_ts DESC LIMIT ?1",
                     [limit],
                 )
@@ -416,7 +428,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id FROM chats WHERE id = ?1",
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash FROM chats WHERE id = ?1",
                 [id],
             )
             .await?;
@@ -459,7 +471,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id 
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash 
                  FROM chats WHERE last_sync_message_id IS NOT NULL 
                  ORDER BY last_message_ts DESC",
                 (),
@@ -1111,6 +1123,7 @@ fn row_to_chat(row: &Row) -> Result<Chat> {
         last_message_ts: row.get::<Option<String>>(4)?.map(|s| parse_ts(&s)),
         is_forum: row.get::<i64>(5).unwrap_or(0) != 0,
         last_sync_message_id: row.get::<Option<i64>>(6).ok().flatten(),
+        access_hash: row.get::<Option<i64>>(7).ok().flatten(),
     })
 }
 

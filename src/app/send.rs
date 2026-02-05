@@ -65,7 +65,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -196,7 +196,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg_id)
@@ -279,7 +279,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg_id)
@@ -542,7 +542,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -587,7 +587,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -644,7 +644,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -693,7 +693,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -748,7 +748,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -1019,7 +1019,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg_id)

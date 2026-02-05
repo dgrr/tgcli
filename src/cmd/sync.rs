@@ -2,17 +2,14 @@ use crate::app::App;
 use crate::out;
 use crate::Cli;
 use anyhow::Result;
-use clap::Args;
+use clap::{Args, Subcommand};
 
+/// Common flags for all sync operations
 #[derive(Args, Debug, Clone)]
-pub struct SyncArgs {
+pub struct CommonSyncArgs {
     /// Full sync: fetch all messages (default: incremental, only new messages)
     #[arg(long, default_value_t = false)]
     pub full: bool,
-
-    /// Local-only sync: skip fetching dialogs from Telegram, only sync chats already in local DB
-    #[arg(long, default_value_t = false)]
-    pub local_only: bool,
 
     /// Download media files
     #[arg(long, default_value_t = false)]
@@ -51,53 +48,74 @@ pub struct SyncArgs {
     pub quiet: bool,
 }
 
-pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
-    let mut app = App::new(cli).await?;
+#[derive(Subcommand, Debug, Clone)]
+pub enum SyncCommand {
+    /// Sync only chat list from Telegram dialogs (no messages)
+    Chats {
+        #[command(flatten)]
+        common: CommonSyncArgs,
+    },
+    /// Sync only messages from existing local chats (uses stored access_hash)
+    Msgs {
+        #[command(flatten)]
+        common: CommonSyncArgs,
+    },
+}
 
-    let output_mode = if args.stream {
+#[derive(Args, Debug, Clone)]
+pub struct SyncArgs {
+    #[command(subcommand)]
+    pub command: Option<SyncCommand>,
+
+    #[command(flatten)]
+    pub common: CommonSyncArgs,
+}
+
+fn build_output_mode(common: &CommonSyncArgs) -> crate::app::sync::OutputMode {
+    if common.stream {
         crate::app::sync::OutputMode::Stream
     } else {
-        match args.output.as_str() {
+        match common.output.as_str() {
             "text" => crate::app::sync::OutputMode::Text,
             "json" => crate::app::sync::OutputMode::Json,
             _ => crate::app::sync::OutputMode::None,
         }
-    };
+    }
+}
 
-    // Default is incremental; --full overrides
-    let incremental = !args.full;
+fn build_sync_options(common: &CommonSyncArgs, local_only: bool) -> crate::app::sync::SyncOptions {
+    let output_mode = build_output_mode(common);
+    let incremental = !common.full;
 
-    let opts = crate::app::sync::SyncOptions {
+    crate::app::sync::SyncOptions {
         output: output_mode,
-        mark_read: args.mark_read,
-        download_media: args.download_media,
-        ignore_chat_ids: args.ignore_chat_ids.clone(),
-        ignore_channels: args.ignore_channels,
-        show_progress: !args.no_progress,
+        mark_read: common.mark_read,
+        download_media: common.download_media,
+        ignore_chat_ids: common.ignore_chat_ids.clone(),
+        ignore_channels: common.ignore_channels,
+        show_progress: !common.no_progress,
         incremental,
-        messages_per_chat: args.messages_per_chat,
-        local_only: args.local_only,
-    };
+        messages_per_chat: common.messages_per_chat,
+        local_only,
+    }
+}
 
-    let result = app.sync(opts).await?;
-
+fn print_sync_result(
+    cli: &Cli,
+    common: &CommonSyncArgs,
+    result: &crate::app::sync::SyncResult,
+    mode_str: &str,
+) {
     if cli.json {
         out::write_json(&serde_json::json!({
             "synced": true,
             "messages_stored": result.messages_stored,
             "chats_stored": result.chats_stored,
-            "incremental": incremental,
-            "local_only": args.local_only,
+            "mode": mode_str,
             "per_chat": result.per_chat,
-        }))?;
-    } else if args.quiet {
-        let mode_str = if args.local_only {
-            "local-only"
-        } else if incremental {
-            "incremental"
-        } else {
-            "full"
-        };
+        }))
+        .ok();
+    } else if common.quiet {
         eprintln!(
             "Sync complete ({}). Messages: {}, Chats: {}",
             mode_str, result.messages_stored, result.chats_stored
@@ -110,8 +128,10 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             .filter(|c| c.messages_synced > 0)
             .collect();
 
-        if chats_with_messages.is_empty() {
-            eprintln!("No new messages.");
+        if chats_with_messages.is_empty() && result.chats_stored == 0 {
+            eprintln!("Nothing synced.");
+        } else if chats_with_messages.is_empty() {
+            eprintln!("Synced {} chats (no new messages).", result.chats_stored);
         } else {
             // Calculate max name length for alignment (including topic indent)
             let mut max_name_len = 0;
@@ -156,6 +176,35 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
                     }
                 }
             }
+        }
+    }
+}
+
+pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
+    match &args.command {
+        Some(SyncCommand::Chats { common }) => {
+            // Sync chats only (no messages) - just run normal sync but with 0 messages per chat
+            let mut app = App::new(cli).await?;
+            let mut opts = build_sync_options(common, false);
+            opts.messages_per_chat = 0;
+            let result = app.sync(opts).await?;
+            print_sync_result(cli, common, &result, "chats-only");
+        }
+        Some(SyncCommand::Msgs { common }) => {
+            // Sync messages only from local chats (uses stored access_hash, no iter_dialogs)
+            let mut app = App::new(cli).await?;
+            let opts = build_sync_options(common, true); // local_only = true
+            let result = app.sync(opts).await?;
+            print_sync_result(cli, common, &result, "msgs-only");
+        }
+        None => {
+            // Default: sync both chats and messages
+            let mut app = App::new(cli).await?;
+            let opts = build_sync_options(&args.common, false);
+            let incremental = !args.common.full;
+            let result = app.sync(opts).await?;
+            let mode_str = if incremental { "incremental" } else { "full" };
+            print_sync_result(cli, &args.common, &result, mode_str);
         }
     }
 

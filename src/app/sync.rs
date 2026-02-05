@@ -3,7 +3,7 @@ use crate::store::UpsertMessageParams;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use grammers_client::types::{Media, Message as TgMessage, Peer};
-use grammers_session::defs::{PeerId, PeerRef};
+use grammers_session::defs::{PeerAuth, PeerId, PeerRef};
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use std::collections::HashSet;
@@ -147,8 +147,14 @@ pub struct SyncResult {
 
 impl App {
     /// Try to resolve a chat ID to a PeerRef from the session cache (no API calls).
-    /// Returns None if the chat is not cached in the session.
-    fn resolve_peer_from_session(&self, chat_id: i64, kind: &str) -> Option<PeerRef> {
+    /// If the peer is not in the session cache but we have a stored access_hash, use that.
+    /// Returns None if the chat is not cached and we have no stored access_hash.
+    fn resolve_peer_from_session(
+        &self,
+        chat_id: i64,
+        kind: &str,
+        stored_access_hash: Option<i64>,
+    ) -> Option<PeerRef> {
         // Try based on the known type first
         match kind {
             "channel" | "group" => {
@@ -160,6 +166,13 @@ impl App {
                         auth: info.auth(),
                     });
                 }
+                // Fallback to stored access_hash if available
+                if let Some(hash) = stored_access_hash {
+                    return Some(PeerRef {
+                        id: channel_peer_id,
+                        auth: PeerAuth::from_hash(hash),
+                    });
+                }
             }
             "user" => {
                 let user_peer_id = PeerId::user(chat_id);
@@ -169,11 +182,18 @@ impl App {
                         auth: info.auth(),
                     });
                 }
+                // Fallback to stored access_hash if available
+                if let Some(hash) = stored_access_hash {
+                    return Some(PeerRef {
+                        id: user_peer_id,
+                        auth: PeerAuth::from_hash(hash),
+                    });
+                }
             }
             _ => {}
         }
 
-        // Fallback: try all peer types
+        // Fallback: try all peer types from session cache
         // Try as channel first (most common for groups)
         let channel_peer_id = PeerId::channel(chat_id);
         if let Some(info) = self.tg.session.peer(channel_peer_id) {
@@ -201,6 +221,22 @@ impl App {
                     auth: info.auth(),
                 });
             }
+            // Small group chats don't need access_hash, so try with default auth
+            if stored_access_hash.is_some() {
+                return Some(PeerRef {
+                    id: chat_peer_id,
+                    auth: PeerAuth::default(),
+                });
+            }
+        }
+
+        // Last resort: try to construct from stored access_hash with best-guess peer type
+        if let Some(hash) = stored_access_hash {
+            // Most likely a channel/group if we have an access_hash
+            return Some(PeerRef {
+                id: channel_peer_id,
+                auth: PeerAuth::from_hash(hash),
+            });
         }
 
         None
@@ -312,15 +348,19 @@ impl App {
                     continue;
                 }
 
-                // Try to resolve peer from session (no API call)
-                let peer_ref = match self.resolve_peer_from_session(chat.id, &chat.kind) {
+                // Try to resolve peer from session or stored access_hash (no API call)
+                let peer_ref = match self.resolve_peer_from_session(
+                    chat.id,
+                    &chat.kind,
+                    chat.access_hash,
+                ) {
                     Some(p) => p,
                     None => {
                         log::debug!(
-                            "Skipping chat {} ({}) - not in session cache",
-                            chat.name,
-                            chat.id
-                        );
+                                "Skipping chat {} ({}) - not in session cache and no stored access_hash",
+                                chat.name,
+                                chat.id
+                            );
                         continue;
                     }
                 };
@@ -497,6 +537,7 @@ impl App {
                             chat.username.as_deref(),
                             Some(ts),
                             chat.is_forum,
+                            chat.access_hash,
                         )
                         .await?;
                 }
@@ -596,7 +637,7 @@ impl App {
             .context("Failed to fetch dialogs from Telegram")?
         {
             let peer = dialog.peer();
-            let (kind, name, username, is_forum) = peer_info(peer);
+            let (kind, name, username, is_forum, access_hash) = peer_info(peer);
             let id = peer.id().bare_id();
 
             // Skip ignored chats.
@@ -605,7 +646,15 @@ impl App {
             }
 
             self.store
-                .upsert_chat(id, &kind, &name, username.as_deref(), None, is_forum)
+                .upsert_chat(
+                    id,
+                    &kind,
+                    &name,
+                    username.as_deref(),
+                    None,
+                    is_forum,
+                    access_hash,
+                )
                 .await?;
             chats_stored += 1;
 
@@ -796,7 +845,15 @@ impl App {
             // Update chat's last_message_ts
             if let Some(ts) = latest_ts {
                 self.store
-                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts), is_forum)
+                    .upsert_chat(
+                        id,
+                        &kind,
+                        &name,
+                        username.as_deref(),
+                        Some(ts),
+                        is_forum,
+                        access_hash,
+                    )
                     .await?;
             }
 
@@ -874,7 +931,7 @@ impl App {
 
         let archived_peers = self.fetch_archived_dialogs().await?;
         for peer in archived_peers {
-            let (kind, name, username, is_forum) = peer_info(&peer);
+            let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
             let id = peer.id().bare_id();
 
             // Skip ignored chats.
@@ -883,7 +940,15 @@ impl App {
             }
 
             self.store
-                .upsert_chat(id, &kind, &name, username.as_deref(), None, is_forum)
+                .upsert_chat(
+                    id,
+                    &kind,
+                    &name,
+                    username.as_deref(),
+                    None,
+                    is_forum,
+                    access_hash,
+                )
                 .await?;
             chats_stored += 1;
 
@@ -1013,7 +1078,15 @@ impl App {
             // Update chat's last_message_ts
             if let Some(ts) = latest_ts {
                 self.store
-                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts), is_forum)
+                    .upsert_chat(
+                        id,
+                        &kind,
+                        &name,
+                        username.as_deref(),
+                        Some(ts),
+                        is_forum,
+                        access_hash,
+                    )
                     .await?;
             }
 
@@ -1282,28 +1355,36 @@ impl App {
     }
 }
 
-/// Returns (kind, name, username, is_forum)
-fn peer_info(peer: &Peer) -> (String, String, Option<String>, bool) {
+/// Returns (kind, name, username, is_forum, access_hash)
+fn peer_info(peer: &Peer) -> (String, String, Option<String>, bool, Option<i64>) {
     match peer {
         Peer::User(user) => {
             let name = user.full_name();
             let username = user.username().map(|s| s.to_string());
-            ("user".to_string(), name, username, false)
+            // Extract access_hash from User raw type
+            let access_hash = match &user.raw {
+                tl::enums::User::User(u) => u.access_hash,
+                tl::enums::User::Empty(_) => None,
+            };
+            ("user".to_string(), name, username, false, access_hash)
         }
         Peer::Group(group) => {
             let name = group.title().map(|s| s.to_string()).unwrap_or_default();
             let username = group.username().map(|s| s.to_string());
             // Check if this is a forum group (megagroup with forum flag)
-            let is_forum = match &group.raw {
-                tl::enums::Chat::Channel(channel) => channel.forum,
-                _ => false,
+            // Extract access_hash from Channel (megagroups are channels internally)
+            let (is_forum, access_hash) = match &group.raw {
+                tl::enums::Chat::Channel(channel) => (channel.forum, channel.access_hash),
+                _ => (false, None),
             };
-            ("group".to_string(), name, username, is_forum)
+            ("group".to_string(), name, username, is_forum, access_hash)
         }
         Peer::Channel(channel) => {
             let name = channel.title().to_string();
             let username = channel.username().map(|s| s.to_string());
-            ("channel".to_string(), name, username, false)
+            // Extract access_hash from Channel raw type (it's directly a tl::types::Channel)
+            let access_hash = channel.raw.access_hash;
+            ("channel".to_string(), name, username, false, access_hash)
         }
     }
 }
