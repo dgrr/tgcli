@@ -26,6 +26,9 @@ pub enum FoldersCommand {
         /// Optional emoticon/emoji for the folder
         #[arg(long)]
         emoticon: Option<String>,
+        /// Chat IDs to include in the folder (can be repeated)
+        #[arg(long = "include", action = clap::ArgAction::Append)]
+        include: Vec<i64>,
     },
     /// Delete a folder
     Delete {
@@ -85,9 +88,11 @@ pub async fn run(cli: &Cli, cmd: &FoldersCommand) -> Result<()> {
     match cmd {
         FoldersCommand::List => list_folders(cli).await,
         FoldersCommand::Show { id } => show_folder(cli, *id).await,
-        FoldersCommand::Create { name, emoticon } => {
-            create_folder(cli, name, emoticon.as_deref()).await
-        }
+        FoldersCommand::Create {
+            name,
+            emoticon,
+            include,
+        } => create_folder(cli, name, emoticon.as_deref(), include).await,
         FoldersCommand::Delete { id } => delete_folder(cli, *id).await,
         FoldersCommand::Add { chat, folder } => add_to_folder(cli, *chat, *folder).await,
         FoldersCommand::Remove { chat, folder } => remove_from_folder(cli, *chat, *folder).await,
@@ -201,7 +206,12 @@ async fn list_folders(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-async fn create_folder(cli: &Cli, name: &str, emoticon: Option<&str>) -> Result<()> {
+async fn create_folder(
+    cli: &Cli,
+    name: &str,
+    emoticon: Option<&str>,
+    include: &[i64],
+) -> Result<()> {
     let app = App::new(cli).await?;
 
     // Get existing folders to find next available ID
@@ -226,6 +236,13 @@ async fn create_folder(cli: &Cli, name: &str, emoticon: Option<&str>) -> Result<
     }
     let new_id = max_id + 1;
 
+    // Resolve include chat IDs to InputPeers
+    let mut include_peers = Vec::new();
+    for &chat_id in include {
+        let input_peer = resolve_chat_to_input_peer(&app, chat_id).await?;
+        include_peers.push(input_peer);
+    }
+
     // Create the title as TextWithEntities
     let title = tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
         text: name.to_string(),
@@ -248,7 +265,7 @@ async fn create_folder(cli: &Cli, name: &str, emoticon: Option<&str>) -> Result<
         emoticon: emoticon.map(|s| s.to_string()),
         color: None,
         pinned_peers: vec![],
-        include_peers: vec![],
+        include_peers,
         exclude_peers: vec![],
     };
 
