@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Dario <me@dgrp.es>"]
 description = "Telegram CLI tool using grammers (pure Rust MTProto)"
+license = "MIT"
+repository = "https://github.com/dgrr/tgcli"
+homepage = "https://github.com/dgrr/tgcli"
+keywords = ["telegram", "cli", "mtproto", "grammers"]
+categories = ["command-line-utilities"]
+readme = "README.md"
 
 [[bin]]
 name = "tgcli"
