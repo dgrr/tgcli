@@ -62,6 +62,57 @@ impl App {
         Ok(msg.id() as i64)
     }
 
+    /// Send a scheduled text message to a chat by ID, returns the message ID.
+    /// The message will be sent at the specified time (server-side scheduling).
+    pub async fn send_text_scheduled(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        schedule_time: chrono::DateTime<Utc>,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let random_id: i64 = rand::rng().random();
+        let schedule_date = schedule_time.timestamp() as i32;
+
+        let request = tl::functions::messages::SendMessage {
+            no_webpage: true,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: None,
+            message: text.to_string(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: Some(schedule_date),
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context_send(chat_id)?;
+        let msg_id = Self::extract_message_id_from_updates(&updates)?;
+
+        // Note: We don't store scheduled messages in the local DB since they haven't been sent yet.
+        // They will appear when the sync process picks them up after they're actually sent.
+
+        Ok(msg_id)
+    }
+
     /// Send a text message as a reply to another message, returns the message ID.
     pub async fn send_text_reply(
         &mut self,
