@@ -3,7 +3,7 @@ use crate::out;
 use crate::store::Store;
 use crate::Cli;
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{ArgAction, Subcommand};
 use grammers_session::defs::{PeerAuth, PeerId, PeerRef};
 use grammers_session::Session;
 use grammers_tl_types as tl;
@@ -52,32 +52,32 @@ pub enum ChatsCommand {
         #[arg(long, default_value = "100")]
         limit: usize,
     },
-    /// Archive a chat (move to Archive folder)
+    /// Archive chats (move to Archive folder)
     Archive {
-        /// Chat ID to archive
-        #[arg(long)]
-        id: i64,
+        /// Chat ID(s) to archive (can be specified multiple times)
+        #[arg(long, action = ArgAction::Append)]
+        id: Vec<i64>,
     },
-    /// Unarchive a chat (move out of Archive folder)
+    /// Unarchive chats (move out of Archive folder)
     Unarchive {
-        /// Chat ID to unarchive
-        #[arg(long)]
-        id: i64,
+        /// Chat ID(s) to unarchive (can be specified multiple times)
+        #[arg(long, action = ArgAction::Append)]
+        id: Vec<i64>,
     },
-    /// Pin a chat
+    /// Pin chats
     Pin {
-        /// Chat ID to pin
-        #[arg(long)]
-        id: i64,
+        /// Chat ID(s) to pin (can be specified multiple times)
+        #[arg(long, action = ArgAction::Append)]
+        id: Vec<i64>,
         /// Folder ID (0 = main chat list, 1 = archive, etc.)
         #[arg(long, default_value = "0")]
         folder: i32,
     },
-    /// Unpin a chat
+    /// Unpin chats
     Unpin {
-        /// Chat ID to unpin
-        #[arg(long)]
-        id: i64,
+        /// Chat ID(s) to unpin (can be specified multiple times)
+        #[arg(long, action = ArgAction::Append)]
+        id: Vec<i64>,
         /// Folder ID (0 = main chat list, 1 = archive, etc.)
         #[arg(long, default_value = "0")]
         folder: i32,
@@ -342,16 +342,28 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             }
         }
         ChatsCommand::Archive { id } => {
-            archive_chat(cli, *id, true).await?;
+            if id.is_empty() {
+                anyhow::bail!("At least one --id is required");
+            }
+            batch_archive(cli, id, true).await?;
         }
         ChatsCommand::Unarchive { id } => {
-            archive_chat(cli, *id, false).await?;
+            if id.is_empty() {
+                anyhow::bail!("At least one --id is required");
+            }
+            batch_archive(cli, id, false).await?;
         }
         ChatsCommand::Pin { id, folder } => {
-            pin_chat(cli, *id, true, *folder).await?;
+            if id.is_empty() {
+                anyhow::bail!("At least one --id is required");
+            }
+            batch_pin(cli, id, true, *folder).await?;
         }
         ChatsCommand::Unpin { id, folder } => {
-            pin_chat(cli, *id, false, *folder).await?;
+            if id.is_empty() {
+                anyhow::bail!("At least one --id is required");
+            }
+            batch_pin(cli, id, false, *folder).await?;
         }
     }
     Ok(())
@@ -519,95 +531,162 @@ async fn list_folder_chats(
     Ok(())
 }
 
-/// Archive or unarchive a chat
-async fn archive_chat(cli: &Cli, chat_id: i64, archive: bool) -> Result<()> {
+/// Batch archive or unarchive multiple chats in a single API call
+async fn batch_archive(cli: &Cli, chat_ids: &[i64], archive: bool) -> Result<()> {
     let app = App::new(cli).await?;
-
-    // Resolve chat to InputPeer
-    let input_peer = resolve_chat_to_input_peer(&app, chat_id).await?;
 
     // folder_id = 1 for Archive, 0 for main chat list
     let folder_id = if archive { 1 } else { 0 };
 
-    let folder_peer = tl::types::InputFolderPeer {
-        peer: input_peer,
-        folder_id,
-    };
+    // Resolve all chats to InputPeers and build folder_peers
+    let mut folder_peers = Vec::with_capacity(chat_ids.len());
+    let mut resolved_ids = Vec::with_capacity(chat_ids.len());
 
-    let request = tl::functions::folders::EditPeerFolders {
-        folder_peers: vec![tl::enums::InputFolderPeer::Peer(folder_peer)],
-    };
+    for &chat_id in chat_ids {
+        match resolve_chat_to_input_peer(&app, chat_id).await {
+            Ok(input_peer) => {
+                let folder_peer = tl::types::InputFolderPeer {
+                    peer: input_peer,
+                    folder_id,
+                };
+                folder_peers.push(tl::enums::InputFolderPeer::Peer(folder_peer));
+                resolved_ids.push(chat_id);
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not resolve chat {}: {}", chat_id, e);
+            }
+        }
+    }
 
+    if folder_peers.is_empty() {
+        anyhow::bail!("No chats could be resolved");
+    }
+
+    // Single API call for all chats
+    let request = tl::functions::folders::EditPeerFolders { folder_peers };
     app.tg.client.invoke(&request).await?;
 
     let action = if archive { "Archived" } else { "Unarchived" };
 
     if cli.json {
+        let results: Vec<_> = resolved_ids
+            .iter()
+            .map(|&id| {
+                serde_json::json!({
+                    "chat_id": id,
+                    "success": true,
+                })
+            })
+            .collect();
         out::write_json(&serde_json::json!({
-            "success": true,
-            "chat_id": chat_id,
             "action": action.to_lowercase(),
+            "count": resolved_ids.len(),
+            "results": results,
         }))?;
     } else {
-        // Get chat name for display
-        let chat_name = app
-            .store
-            .get_chat(chat_id)
-            .await?
-            .map(|c| c.name)
-            .unwrap_or_else(|| format!("Chat {}", chat_id));
-        println!("{} \"{}\" ({})", action, chat_name, chat_id);
+        for &chat_id in &resolved_ids {
+            let chat_name = app
+                .store
+                .get_chat(chat_id)
+                .await?
+                .map(|c| c.name)
+                .unwrap_or_else(|| format!("Chat {}", chat_id));
+            println!("{} \"{}\" ({})", action, chat_name, chat_id);
+        }
     }
 
     Ok(())
 }
 
-/// Pin or unpin a chat
-async fn pin_chat(cli: &Cli, chat_id: i64, pin: bool, folder_id: i32) -> Result<()> {
+/// Batch pin or unpin multiple chats
+/// Note: Telegram API doesn't have a batch pin endpoint, so we process sequentially
+async fn batch_pin(cli: &Cli, chat_ids: &[i64], pin: bool, folder_id: i32) -> Result<()> {
     let app = App::new(cli).await?;
 
-    // Resolve chat to InputPeer
-    let input_peer = resolve_chat_to_input_peer(&app, chat_id).await?;
-
-    // Create InputDialogPeer with folder support
-    let input_dialog_peer = if folder_id != 0 {
-        tl::enums::InputDialogPeer::Folder(tl::types::InputDialogPeerFolder { folder_id })
-    } else {
-        tl::enums::InputDialogPeer::Peer(tl::types::InputDialogPeer { peer: input_peer })
-    };
-
-    let request = tl::functions::messages::ToggleDialogPin {
-        pinned: pin,
-        peer: input_dialog_peer,
-    };
-
-    app.tg.client.invoke(&request).await?;
-
     let action = if pin { "Pinned" } else { "Unpinned" };
+    let mut results = Vec::with_capacity(chat_ids.len());
+
+    for &chat_id in chat_ids {
+        // Resolve chat to InputPeer
+        let input_peer = match resolve_chat_to_input_peer(&app, chat_id).await {
+            Ok(peer) => peer,
+            Err(e) => {
+                eprintln!("Warning: Could not resolve chat {}: {}", chat_id, e);
+                results.push((chat_id, false, Some(e.to_string())));
+                continue;
+            }
+        };
+
+        // Create InputDialogPeer - folder_id only affects which pin list, not the peer itself
+        let input_dialog_peer =
+            tl::enums::InputDialogPeer::Peer(tl::types::InputDialogPeer { peer: input_peer });
+
+        let request = tl::functions::messages::ToggleDialogPin {
+            pinned: pin,
+            peer: input_dialog_peer,
+        };
+
+        match app.tg.client.invoke(&request).await {
+            Ok(_) => {
+                results.push((chat_id, true, None));
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to {} chat {}: {}",
+                    action.to_lowercase(),
+                    chat_id,
+                    e
+                );
+                results.push((chat_id, false, Some(e.to_string())));
+            }
+        }
+    }
+
+    let success_count = results.iter().filter(|(_, success, _)| *success).count();
 
     if cli.json {
+        let json_results: Vec<_> = results
+            .iter()
+            .map(|(id, success, error)| {
+                let mut obj = serde_json::json!({
+                    "chat_id": id,
+                    "success": success,
+                });
+                if let Some(err) = error {
+                    obj["error"] = serde_json::json!(err);
+                }
+                obj
+            })
+            .collect();
         out::write_json(&serde_json::json!({
-            "success": true,
-            "chat_id": chat_id,
             "action": action.to_lowercase(),
             "folder_id": folder_id,
+            "count": success_count,
+            "results": json_results,
         }))?;
     } else {
-        // Get chat name for display
-        let chat_name = app
-            .store
-            .get_chat(chat_id)
-            .await?
-            .map(|c| c.name)
-            .unwrap_or_else(|| format!("Chat {}", chat_id));
-        if folder_id != 0 {
-            println!(
-                "{} \"{}\" ({}) in folder {}",
-                action, chat_name, chat_id, folder_id
-            );
-        } else {
-            println!("{} \"{}\" ({})", action, chat_name, chat_id);
+        for (chat_id, success, _) in &results {
+            if *success {
+                let chat_name = app
+                    .store
+                    .get_chat(*chat_id)
+                    .await?
+                    .map(|c| c.name)
+                    .unwrap_or_else(|| format!("Chat {}", chat_id));
+                if folder_id != 0 {
+                    println!(
+                        "{} \"{}\" ({}) in folder {}",
+                        action, chat_name, chat_id, folder_id
+                    );
+                } else {
+                    println!("{} \"{}\" ({})", action, chat_name, chat_id);
+                }
+            }
         }
+    }
+
+    if success_count == 0 {
+        anyhow::bail!("No chats were successfully {}d", action.to_lowercase());
     }
 
     Ok(())
