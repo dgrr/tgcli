@@ -6,7 +6,6 @@ mod store;
 mod tg;
 
 use clap::Parser;
-use std::time::Duration;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tgcli", version, about = "Telegram CLI (pure Rust, no TDLib)")]
@@ -18,10 +17,6 @@ pub struct Cli {
     /// Output mode: text (default), json, or none
     #[arg(long, global = true, value_enum, default_value = "text")]
     pub output: out::OutputMode,
-
-    /// Command timeout in seconds (non-sync commands)
-    #[arg(long, global = true, default_value = "300")]
-    pub timeout: u64,
 
     #[command(subcommand)]
     pub command: cmd::Command,
@@ -36,10 +31,6 @@ impl Cli {
             }
         }
         s.clone()
-    }
-
-    pub fn timeout_duration(&self) -> Duration {
-        Duration::from_secs(self.timeout)
     }
 }
 

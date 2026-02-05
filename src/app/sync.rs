@@ -19,7 +19,7 @@ use tokio::sync::Semaphore;
 /// Maximum messages to fetch per chat during incremental sync (effectively unlimited).
 const INCREMENTAL_MAX_MESSAGES: usize = 10000;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
     None,
     Text,
@@ -177,6 +177,78 @@ struct FetchedMessage {
     media_path: Option<String>,
     reply_to_id: Option<i64>,
     topic_id: Option<i32>,
+}
+
+/// Output representation of a synced message (used for Text/Json/Stream modes)
+#[derive(Debug, Clone, serde::Serialize)]
+struct SyncMessageOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "type")]
+    msg_type: Option<&'static str>,
+    chat_id: i64,
+    chat_name: String,
+    id: i64,
+    sender_id: i64,
+    from_me: bool,
+    #[serde(rename = "ts")]
+    timestamp: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    topic_id: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media_type: Option<String>,
+}
+
+impl SyncMessageOutput {
+    fn new(chat_id: i64, chat_name: &str, msg: &FetchedMessage, include_type: bool) -> Self {
+        Self {
+            msg_type: if include_type { Some("message") } else { None },
+            chat_id,
+            chat_name: chat_name.to_string(),
+            id: msg.id,
+            sender_id: msg.sender_id,
+            from_me: msg.from_me,
+            timestamp: msg.ts.to_rfc3339(),
+            text: msg.text.clone(),
+            topic_id: msg.topic_id,
+            media_type: msg.media_type.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for SyncMessageOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sender_label = if self.from_me {
+            "me".to_string()
+        } else {
+            format!("user:{}", self.sender_id)
+        };
+
+        // Truncate text for display
+        let short_text = self.text.replace('\n', " ");
+        let short_text = if short_text.len() > 100 {
+            let truncate_at = short_text
+                .char_indices()
+                .take_while(|(i, _)| *i < 100)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0);
+            format!("{}…", &short_text[..truncate_at])
+        } else {
+            short_text
+        };
+
+        // Parse timestamp for display format
+        let ts_display = chrono::DateTime::parse_from_rfc3339(&self.timestamp)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|_| self.timestamp.clone());
+
+        write!(
+            f,
+            "[{}] {}: {}\n[{}]",
+            self.chat_name, sender_label, short_text, ts_display
+        )
+    }
 }
 
 impl App {
@@ -748,53 +820,22 @@ impl App {
                 // Output based on mode
                 match opts.output {
                     OutputMode::Text => {
-                        let sender_label = if msg.from_me {
-                            "me".to_string()
-                        } else {
-                            format!("user:{}", msg.sender_id)
-                        };
-                        let short_text = msg.text.replace('\n', " ");
-                        let short_text = if short_text.len() > 100 {
-                            let truncate_at = short_text
-                                .char_indices()
-                                .take_while(|(i, _)| *i < 100)
-                                .last()
-                                .map(|(i, c)| i + c.len_utf8())
-                                .unwrap_or(0);
-                            format!("{}…", &short_text[..truncate_at])
-                        } else {
-                            short_text
-                        };
-                        let timestamp = msg.ts.format("%Y-%m-%d %H:%M");
-                        println!("[{}] {}: {}", result.chat_name, sender_label, short_text);
-                        println!("[{}]", timestamp);
+                        let output =
+                            SyncMessageOutput::new(result.chat_id, &result.chat_name, msg, false);
+                        println!("{}", output);
                     }
-                    OutputMode::Json => {
-                        let obj = serde_json::json!({
-                            "from_me": msg.from_me,
-                            "sender": msg.sender_id,
-                            "chat": result.chat_id,
-                            "id": msg.id,
-                            "timestamp": msg.ts.to_rfc3339(),
-                            "text": msg.text,
-                        });
-                        println!("{}", serde_json::to_string(&obj).unwrap_or_default());
-                    }
-                    OutputMode::Stream => {
+                    OutputMode::Json | OutputMode::Stream => {
                         use std::io::Write;
-                        let obj = serde_json::json!({
-                            "type": "message",
-                            "from_me": msg.from_me,
-                            "sender_id": msg.sender_id,
-                            "chat_id": result.chat_id,
-                            "id": msg.id,
-                            "ts": msg.ts.to_rfc3339(),
-                            "text": msg.text,
-                            "topic_id": msg.topic_id,
-                            "media_type": msg.media_type,
-                        });
-                        println!("{}", serde_json::to_string(&obj).unwrap_or_default());
-                        let _ = std::io::stdout().flush();
+                        let output = SyncMessageOutput::new(
+                            result.chat_id,
+                            &result.chat_name,
+                            msg,
+                            opts.output == OutputMode::Stream,
+                        );
+                        println!("{}", serde_json::to_string(&output).unwrap_or_default());
+                        if opts.output == OutputMode::Stream {
+                            let _ = std::io::stdout().flush();
+                        }
                     }
                     OutputMode::None => {}
                 }
