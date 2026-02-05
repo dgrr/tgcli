@@ -23,8 +23,14 @@ Pure Rust Telegram CLI using grammers (MTProto) and turso (libSQL). No C/C++ dep
 ## Installation
 
 ```bash
-# Quick install
+# Homebrew (macOS/Linux)
+brew install dgrr/tgcli/tgcli
+
+# Or via curl
 curl -fsSL https://raw.githubusercontent.com/dgrr/tgcli/main/install.sh | bash
+
+# Or cargo
+cargo install tgcli
 
 # Or build from source
 cargo build --release
