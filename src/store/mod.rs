@@ -176,7 +176,7 @@ impl Store {
                 (),
             )
             .await;
-        
+
         if fts_result.is_err() {
             self.has_fts = false;
             log::warn!("FTS5 not available, search will use LIKE fallback");
@@ -404,7 +404,7 @@ impl Store {
         // We'll build the SQL with positional params and collect values
         // Due to turso's typed params, we'll use a simpler approach with string formatting
         // for the dynamic WHERE clause, but still use params for the actual values
-        
+
         let chat_filter = p.chat_id.map(|_| {
             let cond = format!("m.chat_id = ?{}", param_idx);
             param_idx += 1;
@@ -458,7 +458,7 @@ impl Store {
         // Using a Vec<turso::Value> approach
         use turso::Value;
         let mut params: Vec<Value> = Vec::new();
-        
+
         if let Some(chat_id) = p.chat_id {
             params.push(Value::Integer(chat_id));
         }
@@ -470,7 +470,10 @@ impl Store {
         }
         params.push(Value::Integer(p.limit));
 
-        let mut rows = self.conn.query(&sql, turso::params_from_iter(params)).await?;
+        let mut rows = self
+            .conn
+            .query(&sql, turso::params_from_iter(params))
+            .await?;
 
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -490,7 +493,7 @@ impl Store {
 
     async fn search_messages_fts(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
         use turso::Value;
-        
+
         let mut conditions = vec!["messages_fts MATCH ?1".to_string()];
         let mut params: Vec<Value> = vec![Value::Text(p.query.clone())];
         let mut param_idx = 2;
@@ -510,7 +513,7 @@ impl Store {
             params.push(Value::Text(media_type.clone()));
             param_idx += 1;
         }
-        
+
         if !p.ignore_chats.is_empty() {
             let ids: Vec<String> = p.ignore_chats.iter().map(|id| id.to_string()).collect();
             conditions.push(format!("m.chat_id NOT IN ({})", ids.join(",")));
@@ -531,7 +534,10 @@ impl Store {
         );
         params.push(Value::Integer(p.limit));
 
-        let mut rows = self.conn.query(&sql, turso::params_from_iter(params)).await?;
+        let mut rows = self
+            .conn
+            .query(&sql, turso::params_from_iter(params))
+            .await?;
 
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -544,7 +550,7 @@ impl Store {
 
     async fn search_messages_like(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
         use turso::Value;
-        
+
         let pattern = format!("%{}%", p.query);
         let mut conditions = vec!["m.text LIKE ?1".to_string()];
         let mut params: Vec<Value> = vec![Value::Text(pattern)];
@@ -565,7 +571,7 @@ impl Store {
             params.push(Value::Text(media_type.clone()));
             param_idx += 1;
         }
-        
+
         if !p.ignore_chats.is_empty() {
             let ids: Vec<String> = p.ignore_chats.iter().map(|id| id.to_string()).collect();
             conditions.push(format!("m.chat_id NOT IN ({})", ids.join(",")));
@@ -584,7 +590,10 @@ impl Store {
         );
         params.push(Value::Integer(p.limit));
 
-        let mut rows = self.conn.query(&sql, turso::params_from_iter(params)).await?;
+        let mut rows = self
+            .conn
+            .query(&sql, turso::params_from_iter(params))
+            .await?;
 
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {

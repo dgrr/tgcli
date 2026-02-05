@@ -32,9 +32,7 @@ impl TgClient {
         let client = Client::new(&pool);
 
         let SenderPool {
-            runner,
-            updates,
-            ..
+            runner, updates, ..
         } = pool;
 
         let pool_handle = tokio::spawn(async move {
@@ -50,7 +48,6 @@ impl TgClient {
             updates,
         ))
     }
-
 }
 
 impl Drop for TgClient {

@@ -72,18 +72,22 @@ impl App {
                 continue;
             }
 
-            self.store.upsert_chat(id, &kind, &name, username.as_deref(), None).await?;
+            self.store
+                .upsert_chat(id, &kind, &name, username.as_deref(), None)
+                .await?;
             chats_stored += 1;
 
             // Also store as contact if it's a user
             if let Peer::User(ref user) = peer {
-                self.store.upsert_contact(
-                    user.bare_id(),
-                    user.username(),
-                    user.first_name().unwrap_or(""),
-                    user.last_name().unwrap_or(""),
-                    user.phone().unwrap_or(""),
-                ).await?;
+                self.store
+                    .upsert_contact(
+                        user.bare_id(),
+                        user.username(),
+                        user.first_name().unwrap_or(""),
+                        user.last_name().unwrap_or(""),
+                        user.phone().unwrap_or(""),
+                    )
+                    .await?;
             }
 
             // Fetch recent messages for this chat
@@ -110,17 +114,19 @@ impl App {
                 let media_type = msg.media().map(|_m| "media".to_string());
                 let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
 
-                self.store.upsert_message(UpsertMessageParams {
-                    id: msg.id() as i64,
-                    chat_id: id,
-                    sender_id,
-                    ts: msg_ts,
-                    edit_ts: msg.edit_date(),
-                    from_me,
-                    text: text.clone(),
-                    media_type,
-                    reply_to_id,
-                }).await?;
+                self.store
+                    .upsert_message(UpsertMessageParams {
+                        id: msg.id() as i64,
+                        chat_id: id,
+                        sender_id,
+                        ts: msg_ts,
+                        edit_ts: msg.edit_date(),
+                        from_me,
+                        text: text.clone(),
+                        media_type,
+                        reply_to_id,
+                    })
+                    .await?;
                 messages_stored += 1;
 
                 // Output
@@ -170,7 +176,8 @@ impl App {
             // Update chat's last_message_ts
             if let Some(ts) = latest_ts {
                 self.store
-                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts)).await?;
+                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts))
+                    .await?;
             }
         }
 
@@ -197,17 +204,14 @@ impl App {
 
             // Take ownership of updates receiver
             if let Some(updates_rx) = self.updates_rx.take() {
-                let mut update_stream = client.stream_updates(
-                    updates_rx,
-                    UpdatesConfiguration::default(),
-                );
+                let mut update_stream =
+                    client.stream_updates(updates_rx, UpdatesConfiguration::default());
 
                 let idle_duration = Duration::from_secs(opts.idle_exit_secs);
                 let mut last_activity = std::time::Instant::now();
 
                 loop {
-                    let update =
-                        tokio::time::timeout(idle_duration, update_stream.next()).await;
+                    let update = tokio::time::timeout(idle_duration, update_stream.next()).await;
 
                     match update {
                         Ok(Ok(update)) => {
@@ -231,27 +235,31 @@ impl App {
                                     let msg_ts = msg.date();
                                     let text = msg.text().to_string();
 
-                                    self.store.upsert_chat(
-                                        chat_id,
-                                        &kind,
-                                        &name,
-                                        username.as_deref(),
-                                        Some(msg_ts),
-                                    ).await?;
+                                    self.store
+                                        .upsert_chat(
+                                            chat_id,
+                                            &kind,
+                                            &name,
+                                            username.as_deref(),
+                                            Some(msg_ts),
+                                        )
+                                        .await?;
 
-                                    self.store.upsert_message(UpsertMessageParams {
-                                        id: msg.id() as i64,
-                                        chat_id,
-                                        sender_id,
-                                        ts: msg_ts,
-                                        edit_ts: msg.edit_date(),
-                                        from_me: false,
-                                        text: text.clone(),
-                                        media_type: msg.media().map(|_| "media".to_string()),
-                                        reply_to_id: msg
-                                            .reply_to_message_id()
-                                            .map(|id| id as i64),
-                                    }).await?;
+                                    self.store
+                                        .upsert_message(UpsertMessageParams {
+                                            id: msg.id() as i64,
+                                            chat_id,
+                                            sender_id,
+                                            ts: msg_ts,
+                                            edit_ts: msg.edit_date(),
+                                            from_me: false,
+                                            text: text.clone(),
+                                            media_type: msg.media().map(|_| "media".to_string()),
+                                            reply_to_id: msg
+                                                .reply_to_message_id()
+                                                .map(|id| id as i64),
+                                        })
+                                        .await?;
                                     messages_stored += 1;
 
                                     if opts.mark_read {
@@ -287,8 +295,7 @@ impl App {
                                             });
                                             println!(
                                                 "{}",
-                                                serde_json::to_string(&obj)
-                                                    .unwrap_or_default()
+                                                serde_json::to_string(&obj).unwrap_or_default()
                                             );
                                         }
                                         OutputMode::None => {}
@@ -308,19 +315,21 @@ impl App {
 
                                     let msg_ts = msg.date();
 
-                                    self.store.upsert_message(UpsertMessageParams {
-                                        id: msg.id() as i64,
-                                        chat_id,
-                                        sender_id: 0,
-                                        ts: msg_ts,
-                                        edit_ts: msg.edit_date(),
-                                        from_me: true,
-                                        text: msg.text().to_string(),
-                                        media_type: msg.media().map(|_| "media".to_string()),
-                                        reply_to_id: msg
-                                            .reply_to_message_id()
-                                            .map(|id| id as i64),
-                                    }).await?;
+                                    self.store
+                                        .upsert_message(UpsertMessageParams {
+                                            id: msg.id() as i64,
+                                            chat_id,
+                                            sender_id: 0,
+                                            ts: msg_ts,
+                                            edit_ts: msg.edit_date(),
+                                            from_me: true,
+                                            text: msg.text().to_string(),
+                                            media_type: msg.media().map(|_| "media".to_string()),
+                                            reply_to_id: msg
+                                                .reply_to_message_id()
+                                                .map(|id| id as i64),
+                                        })
+                                        .await?;
                                     messages_stored += 1;
                                 }
                                 Update::MessageEdited(msg) => {
@@ -337,22 +346,24 @@ impl App {
 
                                     let msg_ts = msg.date();
 
-                                    self.store.upsert_message(UpsertMessageParams {
-                                        id: msg.id() as i64,
-                                        chat_id,
-                                        sender_id: msg
-                                            .sender()
-                                            .map(|s| s.id().bare_id())
-                                            .unwrap_or(0),
-                                        ts: msg_ts,
-                                        edit_ts: msg.edit_date(),
-                                        from_me: msg.outgoing(),
-                                        text: msg.text().to_string(),
-                                        media_type: msg.media().map(|_| "media".to_string()),
-                                        reply_to_id: msg
-                                            .reply_to_message_id()
-                                            .map(|id| id as i64),
-                                    }).await?;
+                                    self.store
+                                        .upsert_message(UpsertMessageParams {
+                                            id: msg.id() as i64,
+                                            chat_id,
+                                            sender_id: msg
+                                                .sender()
+                                                .map(|s| s.id().bare_id())
+                                                .unwrap_or(0),
+                                            ts: msg_ts,
+                                            edit_ts: msg.edit_date(),
+                                            from_me: msg.outgoing(),
+                                            text: msg.text().to_string(),
+                                            media_type: msg.media().map(|_| "media".to_string()),
+                                            reply_to_id: msg
+                                                .reply_to_message_id()
+                                                .map(|id| id as i64),
+                                        })
+                                        .await?;
                                 }
                                 _ => {}
                             }

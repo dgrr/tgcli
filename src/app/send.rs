@@ -16,21 +16,24 @@ impl App {
             .await?;
 
         let now = Utc::now();
-        self.store.upsert_message(UpsertMessageParams {
-            id: msg.id() as i64,
-            chat_id,
-            sender_id: 0,
-            ts: now,
-            edit_ts: None,
-            from_me: true,
-            text: text.to_string(),
-            media_type: None,
-            reply_to_id: None,
-        }).await?;
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg.id() as i64,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: text.to_string(),
+                media_type: None,
+                reply_to_id: None,
+            })
+            .await?;
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now)).await?;
+            .upsert_chat(chat_id, "user", "", None, Some(now))
+            .await?;
 
         Ok(msg.id() as i64)
     }
@@ -45,7 +48,12 @@ impl App {
     /// Delete messages from a chat.
     /// Returns the number of affected messages.
     /// Note: revoke is effectively always true (grammers hardcodes it).
-    pub async fn delete_messages(&self, chat_id: i64, msg_ids: &[i64], _revoke: bool) -> Result<usize> {
+    pub async fn delete_messages(
+        &self,
+        chat_id: i64,
+        msg_ids: &[i64],
+        _revoke: bool,
+    ) -> Result<usize> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         // grammers expects i32 message IDs
         let ids: Vec<i32> = msg_ids.iter().map(|&id| id as i32).collect();
@@ -63,9 +71,6 @@ impl App {
                 return Ok(PeerRef::from(peer));
             }
         }
-        anyhow::bail!(
-            "Chat {} not found. Make sure you've synced first.",
-            chat_id
-        );
+        anyhow::bail!("Chat {} not found. Make sure you've synced first.", chat_id);
     }
 }

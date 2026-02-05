@@ -104,14 +104,16 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             let after_ts = after.as_deref().map(parse_time).transpose()?;
             let before_ts = before.as_deref().map(parse_time).transpose()?;
 
-            let msgs = store.list_messages(store::ListMessagesParams {
-                chat_id: *chat,
-                limit: *limit,
-                after: after_ts,
-                before: before_ts,
-                ignore_chats: ignore_chats.clone(),
-                ignore_channels: *ignore_channels,
-            }).await?;
+            let msgs = store
+                .list_messages(store::ListMessagesParams {
+                    chat_id: *chat,
+                    limit: *limit,
+                    after: after_ts,
+                    before: before_ts,
+                    ignore_chats: ignore_chats.clone(),
+                    ignore_channels: *ignore_channels,
+                })
+                .await?;
 
             if cli.json {
                 out::write_json(&serde_json::json!({
@@ -150,15 +152,17 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             ignore_chats,
             ignore_channels,
         } => {
-            let msgs = store.search_messages(store::SearchMessagesParams {
-                query: query.clone(),
-                chat_id: *chat,
-                from_id: *from,
-                limit: *limit,
-                media_type: media_type.clone(),
-                ignore_chats: ignore_chats.clone(),
-                ignore_channels: *ignore_channels,
-            }).await?;
+            let msgs = store
+                .search_messages(store::SearchMessagesParams {
+                    query: query.clone(),
+                    chat_id: *chat,
+                    from_id: *from,
+                    limit: *limit,
+                    media_type: media_type.clone(),
+                    ignore_chats: ignore_chats.clone(),
+                    ignore_channels: *ignore_channels,
+                })
+                .await?;
 
             if cli.json {
                 out::write_json(&serde_json::json!({
@@ -292,10 +296,7 @@ fn parse_time(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     }
     // Try YYYY-MM-DD
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let dt = d
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc();
+        let dt = d.and_hms_opt(0, 0, 0).unwrap().and_utc();
         return Ok(dt);
     }
     anyhow::bail!("Invalid time format: {} (use RFC3339 or YYYY-MM-DD)", s);

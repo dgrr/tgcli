@@ -59,10 +59,7 @@ async fn interactive_auth(cli: &Cli) -> Result<()> {
     use grammers_client::SignInError;
     match client.sign_in(&token, &code).await {
         Ok(user) => {
-            let name = user
-                .first_name()
-                .map(|s| s.to_string())
-                .unwrap_or_default();
+            let name = user.first_name().map(|s| s.to_string()).unwrap_or_default();
             if cli.json {
                 out::write_json(&serde_json::json!({
                     "authenticated": true,
@@ -85,10 +82,7 @@ async fn interactive_auth(cli: &Cli) -> Result<()> {
             let user = client
                 .check_password(password_token, password.as_bytes().to_vec())
                 .await?;
-            let name = user
-                .first_name()
-                .map(|s| s.to_string())
-                .unwrap_or_default();
+            let name = user.first_name().map(|s| s.to_string()).unwrap_or_default();
             if cli.json {
                 out::write_json(&serde_json::json!({
                     "authenticated": true,

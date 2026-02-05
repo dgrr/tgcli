@@ -23,10 +23,7 @@ pub enum SocketRequest {
     #[serde(rename = "send_text")]
     SendText { to: i64, message: String },
     #[serde(rename = "mark_read")]
-    MarkRead {
-        chat: i64,
-        message: Option<i64>,
-    },
+    MarkRead { chat: i64, message: Option<i64> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
