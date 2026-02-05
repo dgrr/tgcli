@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::shutdown;
 use crate::store::UpsertMessageParams;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -11,7 +12,7 @@ use grammers_session::Session;
 use grammers_tl_types as tl;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -417,6 +418,9 @@ impl App {
     pub async fn sync_chats(&mut self, opts: SyncOptions) -> Result<SyncResult> {
         let mut chats_stored: u64 = 0;
 
+        // Get shutdown controller for cancellation checks
+        let shutdown_ctrl = shutdown::global();
+
         // Build ignore set for fast lookup.
         let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
 
@@ -443,6 +447,18 @@ impl App {
             .await
             .context("Failed to fetch dialogs from Telegram")?
         {
+            // Check for shutdown
+            if shutdown_ctrl.is_triggered() {
+                if opts.show_progress {
+                    eprint!("\r\x1b[K");
+                }
+                eprintln!("Sync interrupted by shutdown");
+                return Ok(SyncResult {
+                    messages_stored: 0,
+                    chats_stored,
+                    per_chat: Vec::new(),
+                });
+            }
             let peer = dialog.peer();
             let (kind, name, username, is_forum, access_hash) = peer_info(peer);
             let id = peer.id().bare_id();
@@ -489,6 +505,19 @@ impl App {
             }
         }
 
+        // Check for shutdown before archived dialogs
+        if shutdown_ctrl.is_triggered() {
+            if opts.show_progress {
+                eprint!("\r\x1b[K");
+            }
+            eprintln!("Sync interrupted by shutdown");
+            return Ok(SyncResult {
+                messages_stored: 0,
+                chats_stored,
+                per_chat: Vec::new(),
+            });
+        }
+
         // Phase 2: Fetch archived dialogs
         if opts.show_progress {
             eprint!("\rSyncing archived chats... {}", chats_stored);
@@ -496,6 +525,10 @@ impl App {
 
         let archived_peers = self.fetch_archived_dialogs().await?;
         for peer in archived_peers {
+            // Check for shutdown
+            if shutdown_ctrl.is_triggered() {
+                break;
+            }
             let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
             let id = peer.id().bare_id();
 
@@ -558,6 +591,10 @@ impl App {
     /// that already exist in the local database with checkpoints.
     /// Uses concurrent fetching with semaphore-based rate limiting.
     pub async fn sync_msgs(&mut self, opts: SyncOptions) -> Result<SyncResult> {
+        // Get shutdown controller for cancellation
+        let shutdown_ctrl = shutdown::global();
+        let cancellation_token = shutdown_ctrl.child_token();
+
         // Build ignore set for fast lookup.
         let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
         let ignore_channels = opts.ignore_channels;
@@ -596,6 +633,7 @@ impl App {
         // Progress tracking with atomics for thread-safety
         let chats_done = Arc::new(AtomicU64::new(0));
         let messages_fetched = Arc::new(AtomicU64::new(0));
+        let cancelled = Arc::new(AtomicBool::new(false));
 
         // Semaphore for concurrency control
         let concurrency = opts.concurrency.max(1);
@@ -615,22 +653,30 @@ impl App {
         let show_progress = opts.show_progress;
         let chats_done_progress = chats_done.clone();
         let messages_fetched_progress = messages_fetched.clone();
+        let cancelled_progress = cancelled.clone();
 
         // Spawn progress reporter if needed
         let progress_handle = if show_progress {
             let total = total_chats;
+            let cancel_token = cancellation_token.clone();
             Some(tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_millis(500));
                 loop {
-                    interval.tick().await;
-                    let done = chats_done_progress.load(Ordering::Relaxed);
-                    let msgs = messages_fetched_progress.load(Ordering::Relaxed);
-                    eprint!(
-                        "\rSyncing messages... {}/{} chats, {} messages",
-                        done, total, msgs
-                    );
-                    if done >= total as u64 {
-                        break;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let done = chats_done_progress.load(Ordering::Relaxed);
+                            let msgs = messages_fetched_progress.load(Ordering::Relaxed);
+                            eprint!(
+                                "\rSyncing messages... {}/{} chats, {} messages",
+                                done, total, msgs
+                            );
+                            if done >= total as u64 || cancelled_progress.load(Ordering::Relaxed) {
+                                break;
+                            }
+                        }
+                        _ = cancel_token.cancelled() => {
+                            break;
+                        }
                     }
                 }
             }))
@@ -647,9 +693,29 @@ impl App {
                 let store_dir = store_dir.clone();
                 let chats_done = chats_done.clone();
                 let messages_fetched = messages_fetched.clone();
+                let cancel_token = cancellation_token.clone();
+                let cancelled_flag = cancelled.clone();
 
                 async move {
                     let _permit = sem.acquire().await.unwrap();
+
+                    // Check for cancellation before starting
+                    if cancel_token.is_cancelled() {
+                        chats_done.fetch_add(1, Ordering::Relaxed);
+                        return ChatSyncTaskResult {
+                            chat_id: chat.id,
+                            chat_name: chat.name.clone(),
+                            chat_kind: chat.kind.clone(),
+                            chat_username: chat.username.clone(),
+                            is_forum: chat.is_forum,
+                            access_hash: chat.access_hash,
+                            messages: Vec::new(),
+                            highest_msg_id: None,
+                            latest_ts: None,
+                            topic_counts: std::collections::HashMap::new(),
+                            error: None,
+                        };
+                    }
 
                     // Resolve peer
                     let peer_ref = resolve_peer_from_session_static(
@@ -690,6 +756,12 @@ impl App {
                     let mut error: Option<String> = None;
 
                     loop {
+                        // Check for cancellation during message fetching
+                        if cancel_token.is_cancelled() {
+                            cancelled_flag.store(true, Ordering::Relaxed);
+                            break;
+                        }
+
                         match message_iter.next().await {
                             Ok(Some(msg)) => {
                                 let msg_id = msg.id() as i64;
@@ -789,12 +861,18 @@ impl App {
             .await;
 
         // Stop progress reporter
+        cancelled.store(true, Ordering::Relaxed);
         if let Some(handle) = progress_handle {
             handle.abort();
         }
 
         if show_progress {
             eprint!("\r\x1b[K"); // Clear line
+        }
+
+        // Check if we were cancelled
+        if cancellation_token.is_cancelled() {
+            eprintln!("Messages sync interrupted by shutdown");
         }
 
         // Now process results and write to store
@@ -962,6 +1040,9 @@ impl App {
         let mut per_chat_map: std::collections::HashMap<i64, ChatSyncSummary> =
             std::collections::HashMap::new();
 
+        // Get shutdown controller for cancellation checks
+        let shutdown_ctrl = shutdown::global();
+
         // Build ignore set for fast lookup.
         let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
 
@@ -992,6 +1073,19 @@ impl App {
             .await
             .context("Failed to fetch dialogs from Telegram")?
         {
+            // Check for shutdown
+            if shutdown_ctrl.is_triggered() {
+                if opts.show_progress {
+                    eprint!("\r\x1b[K");
+                }
+                eprintln!("Sync interrupted by shutdown");
+                let per_chat: Vec<ChatSyncSummary> = per_chat_map.into_values().collect();
+                return Ok(SyncResult {
+                    messages_stored,
+                    chats_stored,
+                    per_chat,
+                });
+            }
             let peer = dialog.peer();
             let (kind, name, username, is_forum, access_hash) = peer_info(peer);
             let id = peer.id().bare_id();
@@ -1056,6 +1150,11 @@ impl App {
                 .await
                 .with_context(|| format!("Failed to fetch messages for chat {} ({})", name, id))?
             {
+                // Check for shutdown during message fetching
+                if shutdown_ctrl.is_triggered() {
+                    break;
+                }
+
                 let msg_id = msg.id() as i64;
 
                 // For incremental sync, stop when we hit a message we've already seen
@@ -1261,6 +1360,20 @@ impl App {
             }
         }
 
+        // Check for shutdown before archived dialogs
+        if shutdown_ctrl.is_triggered() {
+            if opts.show_progress {
+                eprint!("\r\x1b[K");
+            }
+            eprintln!("Sync interrupted by shutdown");
+            let per_chat: Vec<ChatSyncSummary> = per_chat_map.into_values().collect();
+            return Ok(SyncResult {
+                messages_stored,
+                chats_stored,
+                per_chat,
+            });
+        }
+
         // Phase 1b: Also sync archived dialogs (folder_id=1)
         if opts.show_progress {
             eprint!(
@@ -1271,6 +1384,11 @@ impl App {
 
         let archived_peers = self.fetch_archived_dialogs().await?;
         for peer in archived_peers {
+            // Check for shutdown
+            if shutdown_ctrl.is_triggered() {
+                break;
+            }
+
             let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
             let id = peer.id().bare_id();
 
@@ -1335,6 +1453,11 @@ impl App {
                     name, id
                 )
             })? {
+                // Check for shutdown during message fetching
+                if shutdown_ctrl.is_triggered() {
+                    break;
+                }
+
                 let msg_id = msg.id() as i64;
 
                 // For incremental sync, stop when we hit a message we've already seen
@@ -1502,10 +1625,19 @@ impl App {
             // Clear progress line and print final status
             eprint!("\r\x1b[K"); // Clear line
         }
-        eprintln!(
-            "Sync complete: {} chats, {} messages",
-            chats_stored, messages_stored
-        );
+
+        // Check if we were interrupted
+        if shutdown_ctrl.is_triggered() {
+            eprintln!(
+                "Sync interrupted: {} chats, {} messages saved before shutdown",
+                chats_stored, messages_stored
+            );
+        } else {
+            eprintln!(
+                "Sync complete: {} chats, {} messages",
+                chats_stored, messages_stored
+            );
+        }
 
         // Convert HashMap to Vec and sort topics by message count descending
         let per_chat: Vec<ChatSyncSummary> = per_chat_map

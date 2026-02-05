@@ -2,6 +2,7 @@ mod app;
 mod cmd;
 mod error;
 mod out;
+mod shutdown;
 mod store;
 mod tg;
 
@@ -44,7 +45,24 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    // Set up global shutdown handler
+    let shutdown = shutdown::ShutdownController::new();
+    shutdown::set_global(shutdown.clone());
+
+    // Spawn signal handler task
+    let shutdown_clone = shutdown.clone();
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            log::info!("Received Ctrl+C, initiating graceful shutdown...");
+            shutdown_clone.trigger();
+        }
+    });
+
     if let Err(e) = cmd::run(cli).await {
+        // Don't report error if we're shutting down gracefully
+        if shutdown.is_triggered() {
+            std::process::exit(0);
+        }
         let msg = format!("{e:#}");
         eprintln!("Error: {msg}");
         std::process::exit(1);

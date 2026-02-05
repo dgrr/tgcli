@@ -6,6 +6,7 @@
 //! 3. Optionally runs background incremental sync to catch up on missed messages
 
 use crate::app::App;
+use crate::shutdown;
 use crate::store::UpsertMessageParams;
 use crate::Cli;
 use anyhow::{Context, Result};
@@ -147,11 +148,13 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
     let ignore_set: HashSet<i64> = args.ignore_chat_ids.iter().copied().collect();
     let ignore_channels = args.ignore_channels;
 
+    // Get global shutdown controller
+    let shutdown_ctrl = shutdown::global();
+
     // Counters for statistics
     let messages_received = Arc::new(AtomicU64::new(0));
     let messages_stored = Arc::new(AtomicU64::new(0));
     let backfill_running = Arc::new(AtomicBool::new(false));
-    let shutdown = Arc::new(AtomicBool::new(false));
 
     if !args.quiet {
         eprintln!("Daemon starting...");
@@ -177,14 +180,19 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
         let ignore_ids = args.ignore_chat_ids.clone();
         let ignore_chans = args.ignore_channels;
         let backfill_running_clone = Arc::clone(&backfill_running);
-        let shutdown_clone = Arc::clone(&shutdown);
+        let shutdown_ctrl_clone = shutdown_ctrl.clone();
         let quiet = args.quiet;
 
         Some(tokio::spawn(async move {
             // Small delay to ensure update listener is fully established
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+                _ = shutdown_ctrl_clone.cancelled() => {
+                    return Ok::<_, anyhow::Error>(());
+                }
+            }
 
-            if shutdown_clone.load(Ordering::Relaxed) {
+            if shutdown_ctrl_clone.is_triggered() {
                 return Ok::<_, anyhow::Error>(());
             }
 
@@ -221,9 +229,12 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    log::error!("Background sync failed: {}", e);
-                    if !quiet {
-                        eprintln!("Background sync failed: {}", e);
+                    // Don't log error if we're shutting down
+                    if !shutdown_ctrl_clone.is_triggered() {
+                        log::error!("Background sync failed: {}", e);
+                        if !quiet {
+                            eprintln!("Background sync failed: {}", e);
+                        }
                     }
                 }
             }
@@ -241,11 +252,10 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
     // Main update loop
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
+            _ = shutdown_ctrl.cancelled() => {
                 if !args.quiet {
-                    eprintln!("\nShutting down...");
+                    eprintln!("\nShutting down gracefully...");
                 }
-                shutdown.store(true, Ordering::Relaxed);
                 break;
             }
             update_result = update_stream.next() => {
@@ -431,15 +441,19 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
         }
     }
 
-    // Wait for backfill to finish if running
+    // Wait for backfill to finish if running (with timeout)
     if let Some(handle) = backfill_handle {
         if backfill_running.load(Ordering::Relaxed) && !args.quiet {
             eprintln!("Waiting for background sync to complete...");
         }
-        let _ = handle.await;
+        // Give backfill a chance to finish, but don't wait forever
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
     }
 
     // Sync update state to session before exit
+    if !args.quiet {
+        eprintln!("Syncing session state...");
+    }
     update_stream.sync_update_state();
 
     if !args.quiet {
