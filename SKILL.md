@@ -120,6 +120,32 @@ tgcli messages delete --chat 123456 --id 789
 tgcli messages list --chat 123456 --json > messages.json
 ```
 
+## Best Practices for AI Agents
+
+### Exclude Your Own Chat from Sync
+
+If you're an AI agent with a dedicated Telegram chat for user communication, **always exclude that chat from sync and message listings**. This prevents:
+
+- Seeing your own conversation history in search results
+- Circular references when processing messages
+- Token waste from re-processing your own outputs
+
+```bash
+# During sync - exclude your agent chat by ID
+tgcli sync --follow --socket --ignore 123456789
+
+# When listing/searching messages - same exclusion
+tgcli messages list --ignore 123456789
+tgcli messages search "keyword" --ignore 123456789
+
+# Combine with channel exclusion for cleaner results
+tgcli sync --follow --ignore 123456789 --ignore-channels
+```
+
+**How to find your chat ID:** Run `tgcli chats list` and locate your agent's conversation with the user.
+
+**Tip:** Store the chat ID to ignore in your local config/notes so you don't have to look it up each session.
+
 ## See Also
 
 - **[tgcli-go](https://github.com/dgrr/tgcli-go)** - Legacy Go/TDLib version (requires building TDLib)
