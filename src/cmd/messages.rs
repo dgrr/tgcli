@@ -58,7 +58,7 @@ pub enum MessagesCommand {
         #[arg(long)]
         ignore_channels: bool,
     },
-    /// Search messages (FTS5)
+    /// Search messages (FTS5 for local, Telegram API for global)
     Search {
         /// Search query
         query: String,
@@ -95,6 +95,9 @@ pub enum MessagesCommand {
         /// Exclude channels
         #[arg(long)]
         ignore_channels: bool,
+        /// Search across all chats via Telegram API (ignores local FTS)
+        #[arg(long)]
+        global: bool,
     },
     /// Export messages to stdout (JSON or CSV)
     Export {
@@ -335,54 +338,92 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             media_type,
             ignore_chats,
             ignore_channels,
+            global,
             ..
         } => {
-            let msgs = store
-                .search_messages(store::SearchMessagesParams {
-                    query: query.clone(),
-                    chat_id: *chat,
-                    topic_id: *topic,
-                    from_id: *from,
-                    limit: *limit,
-                    media_type: media_type.clone(),
-                    ignore_chats: ignore_chats.clone(),
-                    ignore_channels: *ignore_channels,
-                })
-                .await?;
+            if *global {
+                // Global search via Telegram API
+                let app = App::new(cli).await?;
+                let results = app.global_search(query, *chat, *limit as usize).await?;
 
-            if cli.json {
-                out::write_json(&serde_json::json!({
-                    "messages": msgs,
-                    "fts": store.has_fts(),
-                }))?;
-            } else {
-                println!(
-                    "{:<20} {:<24} {:<18} {:<10} MATCH",
-                    "TIME", "CHAT", "FROM", "ID"
-                );
-                for m in &msgs {
-                    let from = if m.from_me {
-                        "me".to_string()
-                    } else {
-                        m.sender_id.to_string()
-                    };
-                    let text = if !m.snippet.is_empty() {
-                        &m.snippet
-                    } else {
-                        &m.text
-                    };
-                    let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
+                if cli.json {
+                    out::write_json(&serde_json::json!({
+                        "messages": results,
+                        "global": true,
+                    }))?;
+                } else {
                     println!(
-                        "{:<20} {:<24} {:<18} {:<10} {}",
-                        ts,
-                        out::truncate(&m.chat_id.to_string(), 22),
-                        out::truncate(&from, 16),
-                        m.id,
-                        out::truncate(text, 90),
+                        "{:<20} {:<24} {:<18} {:<10} TEXT",
+                        "TIME", "CHAT", "FROM", "ID"
                     );
+                    for m in &results {
+                        let from_str = if m.from_me {
+                            "me".to_string()
+                        } else {
+                            m.sender_id.to_string()
+                        };
+                        let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
+                        println!(
+                            "{:<20} {:<24} {:<18} {:<10} {}",
+                            ts,
+                            out::truncate(&m.chat_id.to_string(), 22),
+                            out::truncate(&from_str, 16),
+                            m.id,
+                            out::truncate(&m.text, 60),
+                        );
+                    }
+                    eprintln!("\nSearched via Telegram API (global search)");
                 }
-                if !store.has_fts() {
-                    eprintln!("Note: FTS5 not enabled; search is using LIKE (slow).");
+            } else {
+                // Local FTS search
+                let msgs = store
+                    .search_messages(store::SearchMessagesParams {
+                        query: query.clone(),
+                        chat_id: *chat,
+                        topic_id: *topic,
+                        from_id: *from,
+                        limit: *limit,
+                        media_type: media_type.clone(),
+                        ignore_chats: ignore_chats.clone(),
+                        ignore_channels: *ignore_channels,
+                    })
+                    .await?;
+
+                if cli.json {
+                    out::write_json(&serde_json::json!({
+                        "messages": msgs,
+                        "fts": store.has_fts(),
+                        "global": false,
+                    }))?;
+                } else {
+                    println!(
+                        "{:<20} {:<24} {:<18} {:<10} MATCH",
+                        "TIME", "CHAT", "FROM", "ID"
+                    );
+                    for m in &msgs {
+                        let from = if m.from_me {
+                            "me".to_string()
+                        } else {
+                            m.sender_id.to_string()
+                        };
+                        let text = if !m.snippet.is_empty() {
+                            &m.snippet
+                        } else {
+                            &m.text
+                        };
+                        let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
+                        println!(
+                            "{:<20} {:<24} {:<18} {:<10} {}",
+                            ts,
+                            out::truncate(&m.chat_id.to_string(), 22),
+                            out::truncate(&from, 16),
+                            m.id,
+                            out::truncate(text, 90),
+                        );
+                    }
+                    if !store.has_fts() {
+                        eprintln!("Note: FTS5 not enabled; search is using LIKE (slow).");
+                    }
                 }
             }
         }

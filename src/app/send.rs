@@ -1101,6 +1101,81 @@ impl App {
         }
         Ok(())
     }
+
+    /// Global search across all chats via Telegram API.
+    /// Returns messages matching the query.
+    pub async fn global_search(
+        &self,
+        query: &str,
+        chat_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<crate::store::Message>> {
+        let mut results = Vec::new();
+
+        if let Some(cid) = chat_id {
+            // Search within a specific chat
+            let peer_ref = self.resolve_peer_ref(cid).await?;
+            let mut iter = self.tg.client.search_messages(peer_ref).query(query);
+            let mut count = 0;
+
+            while let Some(msg) = iter.next().await? {
+                if count >= limit {
+                    break;
+                }
+                count += 1;
+
+                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let from_me = msg.outgoing();
+
+                results.push(crate::store::Message {
+                    id: msg.id() as i64,
+                    chat_id: cid,
+                    sender_id,
+                    ts: msg.date(),
+                    edit_ts: msg.edit_date(),
+                    from_me,
+                    text: msg.text().to_string(),
+                    media_type: msg.media().map(|_| "media".to_string()),
+                    media_path: None,
+                    reply_to_id: msg.reply_to_message_id().map(|id| id as i64),
+                    topic_id: None,
+                    snippet: String::new(),
+                });
+            }
+        } else {
+            // Global search across all chats
+            let mut iter = self.tg.client.search_all_messages().query(query);
+            let mut count = 0;
+
+            while let Some(msg) = iter.next().await? {
+                if count >= limit {
+                    break;
+                }
+                count += 1;
+
+                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let from_me = msg.outgoing();
+                let msg_chat_id = msg.peer_id().bare_id();
+
+                results.push(crate::store::Message {
+                    id: msg.id() as i64,
+                    chat_id: msg_chat_id,
+                    sender_id,
+                    ts: msg.date(),
+                    edit_ts: msg.edit_date(),
+                    from_me,
+                    text: msg.text().to_string(),
+                    media_type: msg.media().map(|_| "media".to_string()),
+                    media_path: None,
+                    reply_to_id: msg.reply_to_message_id().map(|id| id as i64),
+                    topic_id: None,
+                    snippet: String::new(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 /// Extract topic_id from a raw TL message
