@@ -275,6 +275,43 @@ impl Store {
         self.has_fts = trigger1.is_ok() && trigger2.is_ok() && trigger3.is_ok();
         if !self.has_fts {
             log::warn!("FTS5 triggers failed, search will use LIKE fallback");
+            return Ok(());
+        }
+
+        // Check if FTS index needs to be populated from existing messages
+        // Compare row counts: if messages exist but FTS is empty/underpopulated, rebuild
+        let msg_count: i64 = {
+            let mut rows = self.conn.query("SELECT COUNT(*) FROM messages", ()).await?;
+            rows.next().await?.map(|r| r.get(0).unwrap_or(0)).unwrap_or(0)
+        };
+        let fts_count: i64 = {
+            let mut rows = self.conn.query("SELECT COUNT(*) FROM messages_fts", ()).await?;
+            rows.next().await?.map(|r| r.get(0).unwrap_or(0)).unwrap_or(0)
+        };
+
+        if msg_count > 0 && fts_count < msg_count {
+            log::info!(
+                "FTS5 index incomplete ({} vs {} messages), rebuilding...",
+                fts_count,
+                msg_count
+            );
+            // Rebuild the entire FTS index from scratch
+            let _ = self
+                .conn
+                .execute("DELETE FROM messages_fts", ())
+                .await;
+            let rebuild_result = self
+                .conn
+                .execute(
+                    "INSERT INTO messages_fts(rowid, text) SELECT rowid, text FROM messages",
+                    (),
+                )
+                .await;
+            if let Err(e) = rebuild_result {
+                log::warn!("Failed to populate FTS5 index: {}", e);
+            } else {
+                log::info!("FTS5 index rebuilt successfully");
+            }
         }
 
         Ok(())
