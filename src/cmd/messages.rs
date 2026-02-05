@@ -211,7 +211,10 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             if cli.json {
                 out::write_json(&msgs)?;
             } else {
-                println!("{:<20} {:<18} {:<10} {}", "TIME", "FROM", "ID", "TEXT");
+                println!(
+                    "{:<20} {:<24} {:<18} {:<10} {}",
+                    "TIME", "CHAT", "FROM", "ID", "TEXT"
+                );
                 for m in &msgs {
                     let from = if m.from_me {
                         "me".to_string()
@@ -221,12 +224,13 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     let prefix = if m.id == *id { ">> " } else { "" };
                     let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
                     println!(
-                        "{:<20} {:<18} {:<10} {}{}",
+                        "{:<20} {:<24} {:<18} {:<10} {}{}",
                         ts,
+                        out::truncate(&m.chat_id.to_string(), 22),
                         out::truncate(&from, 16),
                         m.id,
                         prefix,
-                        out::truncate(&m.text, 100),
+                        out::truncate(&m.text, 80),
                     );
                 }
             }
