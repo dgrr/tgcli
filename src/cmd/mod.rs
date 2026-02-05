@@ -3,6 +3,8 @@ pub mod chats;
 pub mod clear;
 pub mod completions;
 pub mod contacts;
+pub mod drafts;
+pub mod export;
 pub mod folders;
 pub mod messages;
 pub mod polls;
@@ -78,6 +80,13 @@ pub enum Command {
         #[command(subcommand)]
         cmd: profile::ProfileCommand,
     },
+    /// Export chat history to file
+    Export(export::ExportArgs),
+    /// Manage message drafts
+    Drafts {
+        #[command(subcommand)]
+        cmd: drafts::DraftsCommand,
+    },
     /// Show version info
     Version,
     /// Generate shell completions
@@ -105,6 +114,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Users { cmd } => users::run(&cli, cmd).await,
         Command::Typing(args) => typing::run(&cli, args).await,
         Command::Profile { cmd } => profile::run(&cli, cmd).await,
+        Command::Export(args) => export::run(&cli, args).await,
+        Command::Drafts { cmd } => drafts::run(&cli, cmd).await,
         Command::Version => {
             version::run(&cli);
             Ok(())
