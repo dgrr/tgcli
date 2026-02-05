@@ -4,11 +4,20 @@ Telegram CLI tool in **pure Rust** using [grammers](https://github.com/Lonami/gr
 
 ## Quick Install
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap dgrr/tgcli
+brew install tgcli
+```
+
+### Shell Script
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dgrr/tgcli/main/install.sh | bash
 ```
 
-Or build from source:
+### Build from Source
 
 ```bash
 cargo build --release

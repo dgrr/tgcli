@@ -118,8 +118,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 }))?;
             } else {
                 println!(
-                    "{:<20} {:<24} {:<18} {:<10} {}",
-                    "TIME", "CHAT", "FROM", "ID", "TEXT"
+                    "{:<20} {:<24} {:<18} {:<10} TEXT",
+                    "TIME", "CHAT", "FROM", "ID"
                 );
                 for m in &msgs {
                     let from = if m.from_me {
@@ -168,8 +168,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 }))?;
             } else {
                 println!(
-                    "{:<20} {:<24} {:<18} {:<10} {}",
-                    "TIME", "CHAT", "FROM", "ID", "MATCH"
+                    "{:<20} {:<24} {:<18} {:<10} MATCH",
+                    "TIME", "CHAT", "FROM", "ID"
                 );
                 for m in &msgs {
                     let from = if m.from_me {
@@ -209,8 +209,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 out::write_json(&msgs)?;
             } else {
                 println!(
-                    "{:<20} {:<24} {:<18} {:<10} {}",
-                    "TIME", "CHAT", "FROM", "ID", "TEXT"
+                    "{:<20} {:<24} {:<18} {:<10} TEXT",
+                    "TIME", "CHAT", "FROM", "ID"
                 );
                 for m in &msgs {
                     let from = if m.from_me {

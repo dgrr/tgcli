@@ -37,6 +37,7 @@ pub struct Message {
     pub from_me: bool,
     pub text: String,
     pub media_type: Option<String>,
+    pub media_path: Option<String>,
     pub reply_to_id: Option<i64>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub snippet: String,
@@ -70,6 +71,7 @@ pub struct UpsertMessageParams {
     pub from_me: bool,
     pub text: String,
     pub media_type: Option<String>,
+    pub media_path: Option<String>,
     pub reply_to_id: Option<i64>,
 }
 
@@ -137,6 +139,7 @@ impl Store {
                     from_me INTEGER NOT NULL DEFAULT 0,
                     text TEXT NOT NULL DEFAULT '',
                     media_type TEXT,
+                    media_path TEXT,
                     reply_to_id INTEGER,
                     PRIMARY KEY (chat_id, id)
                 )",
@@ -144,6 +147,12 @@ impl Store {
             )
             .await
             .context("Failed to create messages table")?;
+
+        // Add media_path column if it doesn't exist (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE messages ADD COLUMN media_path TEXT", ())
+            .await;
 
         self.conn
             .execute(
@@ -303,6 +312,24 @@ impl Store {
         }
     }
 
+    /// Delete a chat from local database. Returns true if a chat was deleted.
+    pub async fn delete_chat(&self, id: i64) -> Result<bool> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM chats WHERE id = ?1", [id])
+            .await?;
+        Ok(affected > 0)
+    }
+
+    /// Delete all messages for a chat from local database. Returns count of deleted messages.
+    pub async fn delete_messages_by_chat(&self, chat_id: i64) -> Result<u64> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id])
+            .await?;
+        Ok(affected)
+    }
+
     // --- Contacts ---
 
     pub async fn upsert_contact(
@@ -370,8 +397,8 @@ impl Store {
 
         self.conn
             .execute(
-                "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(chat_id, id) DO UPDATE SET
                     sender_id = excluded.sender_id,
                     ts = excluded.ts,
@@ -379,6 +406,7 @@ impl Store {
                     from_me = excluded.from_me,
                     text = CASE WHEN excluded.text != '' THEN excluded.text ELSE text END,
                     media_type = COALESCE(excluded.media_type, media_type),
+                    media_path = COALESCE(excluded.media_path, media_path),
                     reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id)",
                 (
                     p.id,
@@ -389,6 +417,7 @@ impl Store {
                     from_me_int,
                     p.text.as_str(),
                     p.media_type.as_deref(),
+                    p.media_path.as_deref(),
                     p.reply_to_id,
                 ),
             )
@@ -446,7 +475,7 @@ impl Store {
         let limit_param_idx = param_idx;
 
         let sql = format!(
-            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id
              FROM messages m
              LEFT JOIN chats c ON c.id = m.chat_id
              WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
@@ -523,7 +552,7 @@ impl Store {
         }
 
         let sql = format!(
-            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id,
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id,
                     snippet(messages_fts, 0, '»', '«', '…', 40) as snippet
              FROM messages m
              JOIN messages_fts ON messages_fts.rowid = m.rowid
@@ -542,7 +571,7 @@ impl Store {
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
             let mut m = row_to_message(&row)?;
-            m.snippet = row.get::<String>(9).unwrap_or_default();
+            m.snippet = row.get::<String>(10).unwrap_or_default();
             msgs.push(m);
         }
         Ok(msgs)
@@ -581,7 +610,7 @@ impl Store {
         }
 
         let sql = format!(
-            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id
              FROM messages m
              LEFT JOIN chats c ON c.id = m.chat_id
              WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
@@ -626,7 +655,7 @@ impl Store {
         let mut before_rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
                  FROM messages WHERE chat_id = ?1 AND ts < ?2 ORDER BY ts DESC LIMIT ?3",
                 (chat_id, ts.as_str(), before),
             )
@@ -641,7 +670,7 @@ impl Store {
         let mut target_rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
                  FROM messages WHERE chat_id = ?1 AND id = ?2",
                 (chat_id, msg_id),
             )
@@ -655,7 +684,7 @@ impl Store {
         let mut after_rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
                  FROM messages WHERE chat_id = ?1 AND ts > ?2 ORDER BY ts ASC LIMIT ?3",
                 (chat_id, ts.as_str(), after),
             )
@@ -675,7 +704,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
                  FROM messages WHERE chat_id = ?1 AND id = ?2",
                 (chat_id, msg_id),
             )
@@ -724,7 +753,8 @@ fn row_to_message(row: &Row) -> Result<Message> {
         from_me: row.get::<i64>(5)? != 0,
         text: row.get(6)?,
         media_type: row.get::<Option<String>>(7)?,
-        reply_to_id: row.get::<Option<i64>>(8)?,
+        media_path: row.get::<Option<String>>(8)?,
+        reply_to_id: row.get::<Option<i64>>(9)?,
         snippet: String::new(),
     })
 }

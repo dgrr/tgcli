@@ -34,8 +34,8 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
                 out::write_json(&contacts)?;
             } else {
                 println!(
-                    "{:<16} {:<20} {:<20} {:<16} {}",
-                    "ID", "FIRST", "LAST", "PHONE", "USERNAME"
+                    "{:<16} {:<20} {:<20} {:<16} USERNAME",
+                    "ID", "FIRST", "LAST", "PHONE"
                 );
                 for c in &contacts {
                     println!(

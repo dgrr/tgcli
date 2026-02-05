@@ -2,10 +2,11 @@ use crate::app::App;
 use crate::store::UpsertMessageParams;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use grammers_client::types::{Peer, Update};
+use grammers_client::types::{Media, Message as TgMessage, Peer, Update};
 use grammers_client::UpdatesConfiguration;
 use grammers_session::defs::PeerRef;
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
@@ -25,12 +26,95 @@ pub struct SyncOptions {
     pub mode: SyncMode,
     pub output: OutputMode,
     pub mark_read: bool,
-    #[allow(dead_code)]
     pub download_media: bool,
     pub enable_socket: bool,
     pub idle_exit_secs: u64,
     pub ignore_chat_ids: Vec<i64>,
     pub ignore_channels: bool,
+}
+
+/// Get media type string and file extension from grammers Media enum
+fn media_info(media: &Media) -> (String, String) {
+    match media {
+        Media::Photo(_) => ("photo".to_string(), "jpg".to_string()),
+        Media::Document(doc) => {
+            let media_type = if doc.duration().is_some() {
+                if doc.resolution().is_some() {
+                    "video"
+                } else {
+                    "audio"
+                }
+            } else {
+                "document"
+            };
+
+            // Try to get extension from filename first
+            let ext = if let Some(name) = Some(doc.name()).filter(|n| !n.is_empty()) {
+                Path::new(name)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_lowercase())
+            } else {
+                None
+            };
+
+            // Fall back to mime type
+            let ext = ext.unwrap_or_else(|| {
+                doc.mime_type()
+                    .map(mime_to_ext)
+                    .unwrap_or_else(|| "bin".to_string())
+            });
+
+            (media_type.to_string(), ext)
+        }
+        Media::Sticker(sticker) => {
+            let ext = if sticker.is_animated() {
+                "tgs".to_string()
+            } else {
+                sticker
+                    .document
+                    .mime_type()
+                    .map(mime_to_ext)
+                    .unwrap_or_else(|| "webp".to_string())
+            };
+            ("sticker".to_string(), ext)
+        }
+        Media::Contact(_) => ("contact".to_string(), "vcf".to_string()),
+        Media::Poll(_) => ("poll".to_string(), "".to_string()),
+        Media::Geo(_) => ("geo".to_string(), "".to_string()),
+        Media::Dice(_) => ("dice".to_string(), "".to_string()),
+        Media::Venue(_) => ("venue".to_string(), "".to_string()),
+        Media::GeoLive(_) => ("geolive".to_string(), "".to_string()),
+        Media::WebPage(_) => ("webpage".to_string(), "".to_string()),
+        _ => ("media".to_string(), "bin".to_string()),
+    }
+}
+
+/// Convert MIME type to file extension
+fn mime_to_ext(mime: &str) -> String {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        "audio/ogg" | "audio/opus" => "ogg",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/m4a" => "m4a",
+        "audio/wav" => "wav",
+        "audio/flac" => "flac",
+        "application/pdf" => "pdf",
+        "application/zip" => "zip",
+        "application/x-rar-compressed" => "rar",
+        "application/x-7z-compressed" => "7z",
+        "text/plain" => "txt",
+        "application/json" => "json",
+        "application/x-tgsticker" => "tgs",
+        _ => mime.split('/').next_back().unwrap_or("bin"),
+    }
+    .to_string()
 }
 
 pub struct SyncResult {
@@ -39,6 +123,70 @@ pub struct SyncResult {
 }
 
 impl App {
+    /// Download media from a message if present and return (media_type, media_path)
+    async fn download_message_media(
+        &self,
+        msg: &TgMessage,
+        chat_id: i64,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let media = match msg.media() {
+            Some(m) => m,
+            None => return Ok((None, None)),
+        };
+
+        let (media_type, ext) = media_info(&media);
+
+        // Skip non-downloadable media types
+        if ext.is_empty() {
+            return Ok((Some(media_type), None));
+        }
+
+        // Build path: {store_dir}/media/{chat_id}/{message_id}.{ext}
+        let media_dir = Path::new(&self.store_dir)
+            .join("media")
+            .join(chat_id.to_string());
+
+        // Create directory if needed
+        std::fs::create_dir_all(&media_dir)?;
+
+        let file_name = format!("{}.{}", msg.id(), ext);
+        let file_path = media_dir.join(&file_name);
+
+        // Skip if file already exists (idempotent)
+        if file_path.exists() {
+            return Ok((
+                Some(media_type),
+                Some(file_path.to_string_lossy().to_string()),
+            ));
+        }
+
+        // Download the media
+        match self.tg.client.download_media(&media, &file_path).await {
+            Ok(()) => {
+                log::info!(
+                    "Downloaded media: chat={} msg={} -> {}",
+                    chat_id,
+                    msg.id(),
+                    file_path.display()
+                );
+                Ok((
+                    Some(media_type),
+                    Some(file_path.to_string_lossy().to_string()),
+                ))
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to download media for chat={} msg={}: {}",
+                    chat_id,
+                    msg.id(),
+                    e
+                );
+                // Return media type but no path on failure
+                Ok((Some(media_type), None))
+            }
+        }
+    }
+
     pub async fn sync(&mut self, opts: SyncOptions) -> Result<SyncResult> {
         let mut messages_stored: u64 = 0;
         let mut chats_stored: u64 = 0;
@@ -111,8 +259,14 @@ impl App {
                 let from_me = msg.outgoing();
 
                 let text = msg.text().to_string();
-                let media_type = msg.media().map(|_m| "media".to_string());
                 let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+
+                // Download media if enabled
+                let (media_type, media_path) = if opts.download_media {
+                    self.download_message_media(&msg, id).await?
+                } else {
+                    (msg.media().map(|_| "media".to_string()), None)
+                };
 
                 self.store
                     .upsert_message(UpsertMessageParams {
@@ -124,6 +278,7 @@ impl App {
                         from_me,
                         text: text.clone(),
                         media_type,
+                        media_path,
                         reply_to_id,
                     })
                     .await?;
@@ -235,6 +390,13 @@ impl App {
                                     let msg_ts = msg.date();
                                     let text = msg.text().to_string();
 
+                                    // Download media if enabled
+                                    let (media_type, media_path) = if opts.download_media {
+                                        self.download_message_media(&msg, chat_id).await?
+                                    } else {
+                                        (msg.media().map(|_| "media".to_string()), None)
+                                    };
+
                                     self.store
                                         .upsert_chat(
                                             chat_id,
@@ -254,7 +416,8 @@ impl App {
                                             edit_ts: msg.edit_date(),
                                             from_me: false,
                                             text: text.clone(),
-                                            media_type: msg.media().map(|_| "media".to_string()),
+                                            media_type,
+                                            media_path,
                                             reply_to_id: msg
                                                 .reply_to_message_id()
                                                 .map(|id| id as i64),
@@ -304,7 +467,7 @@ impl App {
                                 Update::NewMessage(msg) if msg.outgoing() => {
                                     let chat_id = msg.peer_id().bare_id();
                                     let (kind, _, _) = match msg.peer() {
-                                        Ok(p) => peer_info(&p),
+                                        Ok(p) => peer_info(p),
                                         Err(_) => ("unknown".to_string(), "".to_string(), None),
                                     };
 
@@ -314,6 +477,13 @@ impl App {
                                     }
 
                                     let msg_ts = msg.date();
+
+                                    // Download media if enabled
+                                    let (media_type, media_path) = if opts.download_media {
+                                        self.download_message_media(&msg, chat_id).await?
+                                    } else {
+                                        (msg.media().map(|_| "media".to_string()), None)
+                                    };
 
                                     self.store
                                         .upsert_message(UpsertMessageParams {
@@ -324,7 +494,8 @@ impl App {
                                             edit_ts: msg.edit_date(),
                                             from_me: true,
                                             text: msg.text().to_string(),
-                                            media_type: msg.media().map(|_| "media".to_string()),
+                                            media_type,
+                                            media_path,
                                             reply_to_id: msg
                                                 .reply_to_message_id()
                                                 .map(|id| id as i64),
@@ -335,7 +506,7 @@ impl App {
                                 Update::MessageEdited(msg) => {
                                     let chat_id = msg.peer_id().bare_id();
                                     let (kind, _, _) = match msg.peer() {
-                                        Ok(p) => peer_info(&p),
+                                        Ok(p) => peer_info(p),
                                         Err(_) => ("unknown".to_string(), "".to_string(), None),
                                     };
 
@@ -345,6 +516,13 @@ impl App {
                                     }
 
                                     let msg_ts = msg.date();
+
+                                    // Download media if enabled (edits might add media)
+                                    let (media_type, media_path) = if opts.download_media {
+                                        self.download_message_media(&msg, chat_id).await?
+                                    } else {
+                                        (msg.media().map(|_| "media".to_string()), None)
+                                    };
 
                                     self.store
                                         .upsert_message(UpsertMessageParams {
@@ -358,7 +536,8 @@ impl App {
                                             edit_ts: msg.edit_date(),
                                             from_me: msg.outgoing(),
                                             text: msg.text().to_string(),
-                                            media_type: msg.media().map(|_| "media".to_string()),
+                                            media_type,
+                                            media_path,
                                             reply_to_id: msg
                                                 .reply_to_message_id()
                                                 .map(|id| id as i64),
@@ -374,11 +553,11 @@ impl App {
                         }
                         Err(_) => {
                             // Timeout
-                            if matches!(opts.mode, SyncMode::Once) {
-                                if last_activity.elapsed() >= idle_duration {
-                                    eprintln!("Idle timeout reached, exiting.");
-                                    break;
-                                }
+                            if matches!(opts.mode, SyncMode::Once)
+                                && last_activity.elapsed() >= idle_duration
+                            {
+                                eprintln!("Idle timeout reached, exiting.");
+                                break;
                             }
                         }
                     }

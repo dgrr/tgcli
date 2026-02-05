@@ -26,6 +26,7 @@ impl App {
                 from_me: true,
                 text: text.to_string(),
                 media_type: None,
+                media_path: None,
                 reply_to_id: None,
             })
             .await?;
