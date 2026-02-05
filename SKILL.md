@@ -30,10 +30,12 @@ tgcli sync --download-media   # Save media files
 Default output:
 ```
 Synced 3 chats:
-  Anastasia           +3 messages
-  Bloque Genesis      +12 messages
-    └ Trading         +5 messages
-    └ Hyperliquid     +3 messages
+  Alice               +3 messages
+  Rust Developers     +12 messages
+    └ General         +5 messages
+    └ Off-topic       +4 messages
+    └ Announcements   +3 messages
+  News Channel        +1 message
 ```
 
 ### Chats
