@@ -18,6 +18,21 @@ pub enum FoldersCommand {
         #[arg(long)]
         id: i32,
     },
+    /// Create a new folder
+    Create {
+        /// Folder name
+        #[arg(long)]
+        name: String,
+        /// Optional emoticon/emoji for the folder
+        #[arg(long)]
+        emoticon: Option<String>,
+    },
+    /// Delete a folder
+    Delete {
+        /// Folder ID to delete
+        #[arg(long)]
+        id: i32,
+    },
     /// Add a chat to a folder
     Add {
         /// Chat ID to add
@@ -70,6 +85,10 @@ pub async fn run(cli: &Cli, cmd: &FoldersCommand) -> Result<()> {
     match cmd {
         FoldersCommand::List => list_folders(cli).await,
         FoldersCommand::Show { id } => show_folder(cli, *id).await,
+        FoldersCommand::Create { name, emoticon } => {
+            create_folder(cli, name, emoticon.as_deref()).await
+        }
+        FoldersCommand::Delete { id } => delete_folder(cli, *id).await,
         FoldersCommand::Add { chat, folder } => add_to_folder(cli, *chat, *folder).await,
         FoldersCommand::Remove { chat, folder } => remove_from_folder(cli, *chat, *folder).await,
     }
@@ -177,6 +196,139 @@ async fn list_folders(cli: &Cli) -> Result<()> {
                 flags.join(",")
             );
         }
+    }
+
+    Ok(())
+}
+
+async fn create_folder(cli: &Cli, name: &str, emoticon: Option<&str>) -> Result<()> {
+    let app = App::new(cli).await?;
+
+    // Get existing folders to find next available ID
+    let request = tl::functions::messages::GetDialogFilters {};
+    let result = app.tg.client.invoke(&request).await?;
+
+    let filters = match result {
+        tl::enums::messages::DialogFilters::Filters(f) => f.filters,
+    };
+
+    // Find max ID (folder IDs start from 2, as 0 is "All Chats" and 1 is reserved)
+    let mut max_id = 1;
+    for filter_enum in &filters {
+        let id = match filter_enum {
+            tl::enums::DialogFilter::Filter(f) => f.id,
+            tl::enums::DialogFilter::Default => 0,
+            tl::enums::DialogFilter::Chatlist(c) => c.id,
+        };
+        if id > max_id {
+            max_id = id;
+        }
+    }
+    let new_id = max_id + 1;
+
+    // Create the title as TextWithEntities
+    let title = tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
+        text: name.to_string(),
+        entities: vec![],
+    });
+
+    // Create new folder filter
+    let new_filter = tl::types::DialogFilter {
+        contacts: false,
+        non_contacts: false,
+        groups: false,
+        broadcasts: false,
+        bots: false,
+        exclude_muted: false,
+        exclude_read: false,
+        exclude_archived: false,
+        title_noanimate: false,
+        id: new_id,
+        title,
+        emoticon: emoticon.map(|s| s.to_string()),
+        color: None,
+        pinned_peers: vec![],
+        include_peers: vec![],
+        exclude_peers: vec![],
+    };
+
+    let create_request = tl::functions::messages::UpdateDialogFilter {
+        id: new_id,
+        filter: Some(tl::enums::DialogFilter::Filter(new_filter)),
+    };
+
+    app.tg.client.invoke(&create_request).await?;
+
+    if cli.json {
+        out::write_json(&serde_json::json!({
+            "success": true,
+            "id": new_id,
+            "name": name,
+            "emoticon": emoticon,
+        }))?;
+    } else {
+        println!("Created folder '{}' with ID {}", name, new_id);
+    }
+
+    Ok(())
+}
+
+async fn delete_folder(cli: &Cli, folder_id: i32) -> Result<()> {
+    let app = App::new(cli).await?;
+
+    // Verify the folder exists first
+    let request = tl::functions::messages::GetDialogFilters {};
+    let result = app.tg.client.invoke(&request).await?;
+
+    let filters = match result {
+        tl::enums::messages::DialogFilters::Filters(f) => f.filters,
+    };
+
+    let mut found = false;
+    let mut folder_name = String::new();
+    for filter_enum in &filters {
+        match filter_enum {
+            tl::enums::DialogFilter::Filter(f) if f.id == folder_id => {
+                found = true;
+                folder_name = match &f.title {
+                    tl::enums::TextWithEntities::Entities(t) => t.text.clone(),
+                };
+                break;
+            }
+            tl::enums::DialogFilter::Chatlist(c) if c.id == folder_id => {
+                found = true;
+                folder_name = match &c.title {
+                    tl::enums::TextWithEntities::Entities(t) => t.text.clone(),
+                };
+                break;
+            }
+            tl::enums::DialogFilter::Default if folder_id == 0 => {
+                anyhow::bail!("Cannot delete the default 'All Chats' folder");
+            }
+            _ => {}
+        }
+    }
+
+    if !found {
+        anyhow::bail!("Folder {} not found", folder_id);
+    }
+
+    // Delete by calling UpdateDialogFilter with filter: None
+    let delete_request = tl::functions::messages::UpdateDialogFilter {
+        id: folder_id,
+        filter: None,
+    };
+
+    app.tg.client.invoke(&delete_request).await?;
+
+    if cli.json {
+        out::write_json(&serde_json::json!({
+            "success": true,
+            "id": folder_id,
+            "name": folder_name,
+        }))?;
+    } else {
+        println!("Deleted folder '{}' (ID {})", folder_name, folder_id);
     }
 
     Ok(())
