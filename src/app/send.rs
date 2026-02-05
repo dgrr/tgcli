@@ -48,12 +48,8 @@ impl App {
     /// Delete messages from a chat.
     /// Returns the number of affected messages.
     /// Note: revoke is effectively always true (grammers hardcodes it).
-    pub async fn delete_messages(
-        &self,
-        chat_id: i64,
-        msg_ids: &[i64],
-        _revoke: bool,
-    ) -> Result<usize> {
+    /// Delete messages from a chat. Always deletes for everyone (revoke=true).
+    pub async fn delete_messages(&self, chat_id: i64, msg_ids: &[i64]) -> Result<usize> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         // grammers expects i32 message IDs
         let ids: Vec<i32> = msg_ids.iter().map(|&id| id as i32).collect();
