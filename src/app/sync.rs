@@ -1109,7 +1109,7 @@ impl App {
                     (msg.media().map(|_| "media".to_string()), None)
                 };
 
-                // Clone media_type for use in stream output after the move
+                // Clone media_type for use in output after the move
                 let media_type_out = media_type.clone();
 
                 self.store
@@ -1138,61 +1138,45 @@ impl App {
                     last_progress_time = std::time::Instant::now();
                 }
 
-                // Output
+                // Output using SyncMessageOutput struct
                 match opts.output {
                     OutputMode::Text => {
-                        let from_label = if from_me {
-                            "me".to_string()
-                        } else {
-                            sender_id.to_string()
+                        let output = SyncMessageOutput {
+                            msg_type: None,
+                            chat_id: id,
+                            chat_name: name.clone(),
+                            id: msg.id() as i64,
+                            sender_id,
+                            from_me,
+                            timestamp: msg_ts.to_rfc3339(),
+                            text: text.clone(),
+                            topic_id,
+                            media_type: media_type_out.clone(),
                         };
-                        let short_text = text.replace('\n', " ");
-                        let short_text = if short_text.len() > 100 {
-                            // Find the last valid char boundary at or before byte 100
-                            let truncate_at = short_text
-                                .char_indices()
-                                .take_while(|(i, _)| *i < 100)
-                                .last()
-                                .map(|(i, c)| i + c.len_utf8())
-                                .unwrap_or(0);
-                            format!("{}…", &short_text[..truncate_at])
-                        } else {
-                            short_text
-                        };
-                        println!(
-                            "from={} chat={} id={} text={}",
-                            from_label,
-                            id,
-                            msg.id(),
-                            short_text
-                        );
+                        println!("{}", output);
                     }
-                    OutputMode::Json => {
-                        let obj = serde_json::json!({
-                            "from_me": from_me,
-                            "sender": sender_id,
-                            "chat": id,
-                            "id": msg.id(),
-                            "timestamp": msg_ts.to_rfc3339(),
-                            "text": text,
-                        });
-                        println!("{}", serde_json::to_string(&obj).unwrap_or_default());
-                    }
-                    OutputMode::Stream => {
+                    OutputMode::Json | OutputMode::Stream => {
                         use std::io::Write;
-                        let obj = serde_json::json!({
-                            "type": "message",
-                            "from_me": from_me,
-                            "sender_id": sender_id,
-                            "chat_id": id,
-                            "id": msg.id(),
-                            "ts": msg_ts.to_rfc3339(),
-                            "text": text,
-                            "topic_id": topic_id,
-                            "media_type": media_type_out,
-                        });
-                        println!("{}", serde_json::to_string(&obj).unwrap_or_default());
-                        let _ = std::io::stdout().flush();
+                        let output = SyncMessageOutput {
+                            msg_type: if opts.output == OutputMode::Stream {
+                                Some("message")
+                            } else {
+                                None
+                            },
+                            chat_id: id,
+                            chat_name: name.clone(),
+                            id: msg.id() as i64,
+                            sender_id,
+                            from_me,
+                            timestamp: msg_ts.to_rfc3339(),
+                            text: text.clone(),
+                            topic_id,
+                            media_type: media_type_out.clone(),
+                        };
+                        println!("{}", serde_json::to_string(&output).unwrap_or_default());
+                        if opts.output == OutputMode::Stream {
+                            let _ = std::io::stdout().flush();
+                        }
                     }
                     OutputMode::None => {}
                 }
