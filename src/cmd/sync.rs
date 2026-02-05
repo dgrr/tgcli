@@ -41,6 +41,14 @@ pub struct SyncArgs {
     /// Skip all channels
     #[arg(long, default_value_t = false)]
     pub ignore_channels: bool,
+
+    /// Webhook URL to POST new messages to
+    #[arg(long, value_name = "URL")]
+    pub webhook: Option<String>,
+
+    /// Secret for HMAC-SHA256 signature (X-Signature header)
+    #[arg(long, value_name = "SECRET")]
+    pub webhook_secret: Option<String>,
 }
 
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
@@ -70,6 +78,8 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         idle_exit_secs: args.idle_exit,
         ignore_chat_ids: args.ignore_chat_ids.clone(),
         ignore_channels: args.ignore_channels,
+        webhook_url: args.webhook.clone(),
+        webhook_secret: args.webhook_secret.clone(),
     };
 
     let result = app.sync(opts).await?;

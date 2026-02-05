@@ -6,9 +6,13 @@ use grammers_client::types::{Media, Message as TgMessage, Peer, Update};
 use grammers_client::UpdatesConfiguration;
 use grammers_session::defs::PeerRef;
 use grammers_tl_types as tl;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum SyncMode {
@@ -32,6 +36,61 @@ pub struct SyncOptions {
     pub idle_exit_secs: u64,
     pub ignore_chat_ids: Vec<i64>,
     pub ignore_channels: bool,
+    pub webhook_url: Option<String>,
+    pub webhook_secret: Option<String>,
+}
+
+/// Webhook client for posting new messages to an external URL
+pub struct WebhookClient {
+    url: String,
+    secret: Option<String>,
+    client: reqwest::Client,
+}
+
+impl WebhookClient {
+    pub fn new(url: String, secret: Option<String>) -> Self {
+        Self {
+            url,
+            secret,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Send a message payload to the webhook URL
+    pub async fn send(&self, payload: &serde_json::Value) -> Result<()> {
+        let body = serde_json::to_string(payload)?;
+
+        let mut request = self
+            .client
+            .post(&self.url)
+            .header("Content-Type", "application/json");
+
+        // Add HMAC signature if secret is configured
+        if let Some(ref secret) = self.secret {
+            let mut mac =
+                HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take any key size");
+            mac.update(body.as_bytes());
+            let signature = hex::encode(mac.finalize().into_bytes());
+            request = request.header("X-Signature", format!("sha256={}", signature));
+        }
+
+        match request.body(body).send().await {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    log::warn!(
+                        "Webhook returned non-success status: {} {}",
+                        response.status(),
+                        response.text().await.unwrap_or_default()
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!("Webhook request failed: {}", e);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -205,6 +264,16 @@ impl App {
             }
             false
         };
+
+        // Create webhook client if URL is provided
+        let webhook = opts
+            .webhook_url
+            .as_ref()
+            .map(|url| WebhookClient::new(url.clone(), opts.webhook_secret.clone()));
+
+        if webhook.is_some() {
+            eprintln!("Webhook enabled: {}", opts.webhook_url.as_ref().unwrap());
+        }
 
         let client = &self.tg.client;
 
@@ -418,6 +487,9 @@ impl App {
                                         (msg.media().map(|_| "media".to_string()), None)
                                     };
 
+                                    // Clone media_type for webhook before it's moved
+                                    let media_type_for_webhook = media_type.clone();
+
                                     self.store
                                         .upsert_chat(
                                             chat_id,
@@ -485,6 +557,26 @@ impl App {
                                             );
                                         }
                                         OutputMode::None => {}
+                                    }
+
+                                    // Send to webhook if configured
+                                    if let Some(ref wh) = webhook {
+                                        let payload = serde_json::json!({
+                                            "event": "new_message",
+                                            "from_me": false,
+                                            "chat_id": chat_id,
+                                            "chat_name": name,
+                                            "chat_kind": kind,
+                                            "message_id": msg.id(),
+                                            "sender_id": sender_id,
+                                            "timestamp": msg_ts.to_rfc3339(),
+                                            "text": text,
+                                            "media_type": media_type_for_webhook,
+                                            "reply_to_id": msg.reply_to_message_id(),
+                                            "topic_id": topic_id,
+                                        });
+                                        // Fire and forget - don't block on webhook errors
+                                        let _ = wh.send(&payload).await;
                                     }
                                 }
                                 Update::NewMessage(msg) if msg.outgoing() => {
