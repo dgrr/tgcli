@@ -3,6 +3,7 @@ pub mod chats;
 pub mod clear;
 pub mod completions;
 pub mod contacts;
+pub mod daemon;
 pub mod drafts;
 pub mod export;
 pub mod folders;
@@ -29,6 +30,8 @@ pub enum Command {
     /// Sync chats and messages from Telegram
     #[command(subcommand_negates_reqs = true)]
     Sync(sync::SyncArgs),
+    /// Run persistent daemon for real-time message sync
+    Daemon(daemon::DaemonArgs),
     /// Clear local database (keeps session)
     Clear(clear::ClearArgs),
     /// Wipe local database file (keeps session)
@@ -105,6 +108,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     match &cli.command {
         Command::Auth(args) => auth::run(&cli, args).await,
         Command::Sync(args) => sync::run(&cli, args).await,
+        Command::Daemon(args) => daemon::run(&cli, args).await,
         Command::Clear(args) => clear::run(&cli, args).await,
         Command::Wipe(args) => wipe::run(&cli, args).await,
         Command::Chats { cmd } => chats::run(&cli, cmd).await,
