@@ -68,6 +68,7 @@ pub struct ListMessagesParams {
 pub struct SearchMessagesParams {
     pub query: String,
     pub chat_id: Option<i64>,
+    pub topic_id: Option<i32>,
     pub from_id: Option<i64>,
     pub limit: i64,
     pub media_type: Option<String>,
@@ -711,6 +712,11 @@ impl Store {
             params.push(Value::Integer(chat_id));
             param_idx += 1;
         }
+        if let Some(topic_id) = p.topic_id {
+            conditions.push(format!("m.topic_id = ?{}", param_idx));
+            params.push(Value::Integer(topic_id as i64));
+            param_idx += 1;
+        }
         if let Some(from_id) = p.from_id {
             conditions.push(format!("m.sender_id = ?{}", param_idx));
             params.push(Value::Integer(from_id));
@@ -767,6 +773,11 @@ impl Store {
         if let Some(chat_id) = p.chat_id {
             conditions.push(format!("m.chat_id = ?{}", param_idx));
             params.push(Value::Integer(chat_id));
+            param_idx += 1;
+        }
+        if let Some(topic_id) = p.topic_id {
+            conditions.push(format!("m.topic_id = ?{}", param_idx));
+            params.push(Value::Integer(topic_id as i64));
             param_idx += 1;
         }
         if let Some(from_id) = p.from_id {

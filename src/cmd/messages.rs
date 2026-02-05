@@ -65,6 +65,9 @@ pub enum MessagesCommand {
         /// Chat ID filter
         #[arg(long)]
         chat: Option<i64>,
+        /// Topic ID (for forum groups)
+        #[arg(long)]
+        topic: Option<i32>,
         /// Sender ID filter
         #[arg(long)]
         from: Option<i64>,
@@ -161,6 +164,9 @@ pub enum MessagesCommand {
         /// Destination chat ID
         #[arg(long)]
         to: i64,
+        /// Destination topic ID (for forum groups)
+        #[arg(long)]
+        topic: Option<i32>,
     },
     /// Edit a message's text
     Edit {
@@ -323,6 +329,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
         MessagesCommand::Search {
             query,
             chat,
+            topic,
             from,
             limit,
             media_type,
@@ -334,6 +341,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 .search_messages(store::SearchMessagesParams {
                     query: query.clone(),
                     chat_id: *chat,
+                    topic_id: *topic,
                     from_id: *from,
                     limit: *limit,
                     media_type: media_type.clone(),
@@ -469,20 +477,34 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 );
             }
         }
-        MessagesCommand::Forward { chat, id, to } => {
+        MessagesCommand::Forward {
+            chat,
+            id,
+            to,
+            topic,
+        } => {
             // Forward requires network access
             let app = App::new(cli).await?;
 
-            let new_msg_id = app.forward_message(*chat, *id, *to).await?;
+            let new_msg_id = app.forward_message(*chat, *id, *to, *topic).await?;
 
             if cli.json {
-                out::write_json(&serde_json::json!({
+                let mut json = serde_json::json!({
                     "forwarded": true,
                     "from_chat": chat,
                     "message_id": id,
                     "to_chat": to,
                     "new_message_id": new_msg_id,
-                }))?;
+                });
+                if let Some(topic_id) = topic {
+                    json["to_topic"] = serde_json::json!(topic_id);
+                }
+                out::write_json(&json)?;
+            } else if let Some(topic_id) = topic {
+                println!(
+                    "Forwarded message {} from {} to {} topic {} (new ID: {})",
+                    id, chat, to, topic_id, new_msg_id
+                );
             } else {
                 println!(
                     "Forwarded message {} from {} to {} (new ID: {})",

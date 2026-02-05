@@ -387,13 +387,14 @@ impl App {
         Ok(())
     }
 
-    /// Forward a message from one chat to another.
+    /// Forward a message from one chat to another (optionally to a specific topic).
     /// Returns the new message ID in the destination chat.
     pub async fn forward_message(
         &self,
         from_chat_id: i64,
         msg_id: i64,
         to_chat_id: i64,
+        to_topic_id: Option<i32>,
     ) -> Result<i64> {
         let from_peer = self.resolve_peer_ref(from_chat_id).await?;
         let to_peer = self.resolve_peer_ref(to_chat_id).await?;
@@ -415,7 +416,7 @@ impl App {
             id: vec![msg_id as i32],
             random_id: vec![random_id],
             to_peer: to_input_peer,
-            top_msg_id: None,
+            top_msg_id: to_topic_id,
             schedule_date: None,
             send_as: None,
             quick_reply_shortcut: None,
@@ -434,14 +435,29 @@ impl App {
         Ok(new_msg_id)
     }
 
-    /// Mark a chat as read.
-    pub async fn mark_read(&mut self, chat_id: i64) -> Result<()> {
+    /// Mark a chat (or topic in a forum) as read.
+    pub async fn mark_read(&mut self, chat_id: i64, topic_id: Option<i32>) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
-        self.tg
-            .client
-            .mark_as_read(peer_ref)
-            .await
-            .context(format!("Failed to mark chat {} as read", chat_id))?;
+
+        if let Some(tid) = topic_id {
+            // For forum topics, use ReadDiscussion to mark the topic as read
+            let input_peer: tl::enums::InputPeer = peer_ref.into();
+            let request = tl::functions::messages::ReadDiscussion {
+                peer: input_peer,
+                msg_id: tid,
+                read_max_id: i32::MAX,
+            };
+            self.tg.client.invoke(&request).await.context(format!(
+                "Failed to mark topic {} in chat {} as read",
+                tid, chat_id
+            ))?;
+        } else {
+            self.tg
+                .client
+                .mark_as_read(peer_ref)
+                .await
+                .context(format!("Failed to mark chat {} as read", chat_id))?;
+        }
         Ok(())
     }
 
@@ -1026,33 +1042,63 @@ impl App {
         Ok(())
     }
 
-    /// Send typing indicator to a chat.
-    pub async fn set_typing(&self, chat_id: i64) -> Result<()> {
+    /// Send typing indicator to a chat (or topic in a forum).
+    pub async fn set_typing(&self, chat_id: i64, topic_id: Option<i32>) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
-        self.tg
-            .client
-            .action(peer_ref)
-            .oneshot(SendMessageAction::SendMessageTypingAction)
-            .await
-            .context(format!(
-                "Failed to set typing indicator in chat {}",
-                chat_id
+
+        if let Some(tid) = topic_id {
+            // For forum topics, use raw TL to set typing with top_msg_id
+            let input_peer: tl::enums::InputPeer = peer_ref.into();
+            let request = tl::functions::messages::SetTyping {
+                peer: input_peer,
+                top_msg_id: Some(tid),
+                action: SendMessageAction::SendMessageTypingAction,
+            };
+            self.tg.client.invoke(&request).await.context(format!(
+                "Failed to set typing indicator in topic {} of chat {}",
+                tid, chat_id
             ))?;
+        } else {
+            self.tg
+                .client
+                .action(peer_ref)
+                .oneshot(SendMessageAction::SendMessageTypingAction)
+                .await
+                .context(format!(
+                    "Failed to set typing indicator in chat {}",
+                    chat_id
+                ))?;
+        }
         Ok(())
     }
 
-    /// Cancel typing indicator in a chat.
-    pub async fn cancel_typing(&self, chat_id: i64) -> Result<()> {
+    /// Cancel typing indicator in a chat (or topic in a forum).
+    pub async fn cancel_typing(&self, chat_id: i64, topic_id: Option<i32>) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
-        self.tg
-            .client
-            .action(peer_ref)
-            .cancel()
-            .await
-            .context(format!(
-                "Failed to cancel typing indicator in chat {}",
-                chat_id
+
+        if let Some(tid) = topic_id {
+            // For forum topics, use raw TL to cancel typing with top_msg_id
+            let input_peer: tl::enums::InputPeer = peer_ref.into();
+            let request = tl::functions::messages::SetTyping {
+                peer: input_peer,
+                top_msg_id: Some(tid),
+                action: SendMessageAction::SendMessageCancelAction,
+            };
+            self.tg.client.invoke(&request).await.context(format!(
+                "Failed to cancel typing indicator in topic {} of chat {}",
+                tid, chat_id
             ))?;
+        } else {
+            self.tg
+                .client
+                .action(peer_ref)
+                .cancel()
+                .await
+                .context(format!(
+                    "Failed to cancel typing indicator in chat {}",
+                    chat_id
+                ))?;
+        }
         Ok(())
     }
 }
