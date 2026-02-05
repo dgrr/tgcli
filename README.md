@@ -2,6 +2,19 @@
 
 Telegram CLI tool in **pure Rust** using [grammers](https://github.com/Lonami/grammers) (MTProto). No TDLib, no C/C++ dependencies. `cargo build` and done.
 
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dgrr/tgrs/main/install.sh | bash
+```
+
+Or build from source:
+
+```bash
+cargo build --release
+cp target/release/tgrs /usr/local/bin/
+```
+
 ## Features
 
 - **Auth**: Phone → code → 2FA authentication
