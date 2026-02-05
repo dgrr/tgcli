@@ -31,6 +31,17 @@ class Tgcli < Formula
     bin.install binary => "tgcli"
   end
 
+  def caveats
+    <<~EOS
+      If you have a tgcli sync service running, restart it to use the new version:
+        launchctl kickstart -k gui/$(id -u)/com.tgcli.sync
+
+      Or manually:
+        launchctl stop com.tgcli.sync
+        launchctl start com.tgcli.sync
+    EOS
+  end
+
   test do
     assert_match "tgcli", shell_output("#{bin}/tgcli --version")
   end
