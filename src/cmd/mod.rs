@@ -17,6 +17,7 @@ pub mod topics;
 pub mod typing;
 pub mod users;
 pub mod version;
+pub mod wipe;
 
 use crate::Cli;
 use clap::Subcommand;
@@ -29,6 +30,8 @@ pub enum Command {
     Sync(sync::SyncArgs),
     /// Clear local database (keeps session)
     Clear(clear::ClearArgs),
+    /// Wipe local database file (keeps session)
+    Wipe(wipe::WipeArgs),
     /// List and show chats
     Chats {
         #[command(subcommand)]
@@ -102,6 +105,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Auth(args) => auth::run(&cli, args).await,
         Command::Sync(args) => sync::run(&cli, args).await,
         Command::Clear(args) => clear::run(&cli, args).await,
+        Command::Wipe(args) => wipe::run(&cli, args).await,
         Command::Chats { cmd } => chats::run(&cli, cmd).await,
         Command::Messages { cmd } => messages::run(&cli, cmd).await,
         Command::Send(args) => send::run(&cli, args).await,
