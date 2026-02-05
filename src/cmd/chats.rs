@@ -141,6 +141,18 @@ pub enum ChatsCommand {
         #[arg(long, default_value = "20")]
         limit: usize,
     },
+    /// Create a new group or channel
+    Create {
+        /// Name of the group or channel
+        #[arg(long)]
+        name: String,
+        /// Type: "group" or "channel"
+        #[arg(long, value_parser = ["group", "channel"])]
+        r#type: String,
+        /// Description/about text
+        #[arg(long)]
+        description: Option<String>,
+    },
 }
 
 #[derive(Serialize)]
@@ -536,6 +548,30 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                         c.username.as_deref().unwrap_or("-")
                     );
                 }
+            }
+        }
+        ChatsCommand::Create {
+            name,
+            r#type,
+            description,
+        } => {
+            let app = App::new(cli).await?;
+            let result = app
+                .create_chat(name, r#type, description.as_deref())
+                .await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "created": true,
+                    "id": result.id,
+                    "kind": result.kind,
+                    "name": result.name,
+                }))?;
+            } else {
+                println!(
+                    "Created {} \"{}\" (ID: {})",
+                    result.kind, result.name, result.id
+                );
             }
         }
     }

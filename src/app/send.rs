@@ -1572,6 +1572,106 @@ impl App {
 
         Ok(results)
     }
+
+    /// Create a new group or channel.
+    /// Returns a CreateChatResult with the new chat's info.
+    pub async fn create_chat(
+        &self,
+        name: &str,
+        chat_type: &str,
+        description: Option<&str>,
+    ) -> Result<CreateChatResult> {
+        match chat_type {
+            "group" => {
+                // Create a supergroup (megagroup) which supports descriptions
+                // Basic groups have limitations, so we create a supergroup instead
+                let request = tl::functions::channels::CreateChannel {
+                    broadcast: false,
+                    megagroup: true, // This creates a supergroup
+                    for_import: false,
+                    forum: false,
+                    title: name.to_string(),
+                    about: description.unwrap_or("").to_string(),
+                    geo_point: None,
+                    address: None,
+                    ttl_period: None,
+                };
+
+                let updates = self
+                    .tg
+                    .client
+                    .invoke(&request)
+                    .await
+                    .context("Failed to create group")?;
+
+                let chat_id = Self::extract_channel_id_from_updates(&updates)?;
+
+                Ok(CreateChatResult {
+                    id: chat_id,
+                    kind: "group".to_string(),
+                    name: name.to_string(),
+                })
+            }
+            "channel" => {
+                // Create a channel (actually creates a megagroup/supergroup by default)
+                let request = tl::functions::channels::CreateChannel {
+                    broadcast: true, // true = channel, false = megagroup
+                    megagroup: false,
+                    for_import: false,
+                    forum: false,
+                    title: name.to_string(),
+                    about: description.unwrap_or("").to_string(),
+                    geo_point: None,
+                    address: None,
+                    ttl_period: None,
+                };
+
+                let updates = self
+                    .tg
+                    .client
+                    .invoke(&request)
+                    .await
+                    .context("Failed to create channel")?;
+
+                let chat_id = Self::extract_channel_id_from_updates(&updates)?;
+
+                Ok(CreateChatResult {
+                    id: chat_id,
+                    kind: "channel".to_string(),
+                    name: name.to_string(),
+                })
+            }
+            _ => {
+                anyhow::bail!(
+                    "Invalid chat type '{}'. Use 'group' or 'channel'.",
+                    chat_type
+                );
+            }
+        }
+    }
+
+    /// Extract channel ID from CreateChannel updates response
+    fn extract_channel_id_from_updates(updates: &tl::enums::Updates) -> Result<i64> {
+        match updates {
+            tl::enums::Updates::Updates(u) => {
+                for chat in &u.chats {
+                    if let tl::enums::Chat::Channel(c) = chat {
+                        return Ok(c.id);
+                    }
+                }
+                anyhow::bail!("No channel ID found in response")
+            }
+            _ => anyhow::bail!("Unexpected response type from CreateChannel"),
+        }
+    }
+}
+
+/// Result from creating a chat
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CreateChatResult {
+    pub id: i64,
+    pub kind: String,
+    pub name: String,
 }
 
 /// Extract topic_id from a raw TL message
