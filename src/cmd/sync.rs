@@ -42,9 +42,9 @@ pub struct SyncArgs {
     #[arg(long, default_value = "50")]
     pub messages_per_chat: usize,
 
-    /// Show summary of messages synced per chat (useful for LLMs)
+    /// Suppress summary output (just show "Sync complete")
     #[arg(long, default_value_t = false)]
-    pub summary: bool,
+    pub quiet: bool,
 }
 
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
@@ -84,8 +84,14 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             "incremental": incremental,
             "per_chat": result.per_chat,
         }))?;
-    } else if args.summary {
-        // Output summary for LLMs: chat_id, messages synced, chat name
+    } else if args.quiet {
+        let mode_str = if incremental { "incremental" } else { "full" };
+        eprintln!(
+            "Sync complete ({}). Messages: {}, Chats: {}",
+            mode_str, result.messages_stored, result.chats_stored
+        );
+    } else {
+        // Default: Output summary for LLMs: chat_id, messages synced, chat name
         // For forums, also show topic breakdown
         for chat in &result.per_chat {
             println!(
@@ -104,12 +110,6 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             "Total: {} messages across {} chats",
             result.messages_stored,
             result.per_chat.len()
-        );
-    } else {
-        let mode_str = if incremental { "incremental" } else { "full" };
-        eprintln!(
-            "Sync complete ({}). Messages: {}, Chats: {}",
-            mode_str, result.messages_stored, result.chats_stored
         );
     }
 
