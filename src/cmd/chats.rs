@@ -133,6 +133,14 @@ pub enum ChatsCommand {
         #[arg(long)]
         user: i64,
     },
+    /// Search for chats by name via Telegram API
+    Search {
+        /// Search query
+        query: String,
+        /// Limit results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
 }
 
 #[derive(Serialize)]
@@ -504,6 +512,30 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 }))?;
             } else {
                 println!("Demoted user {} in chat {}", user, chat);
+            }
+        }
+        ChatsCommand::Search { query, limit } => {
+            let app = App::new(cli).await?;
+            let results = app.search_chats(query, *limit).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "query": query,
+                    "count": results.len(),
+                    "chats": results,
+                }))?;
+            } else {
+                println!("Search results for \"{}\":\n", query);
+                println!("{:<12} {:<30} {:<16} USERNAME", "KIND", "NAME", "ID");
+                for c in &results {
+                    println!(
+                        "{:<12} {:<30} {:<16} {}",
+                        c.kind,
+                        out::truncate(&c.name, 28),
+                        c.id,
+                        c.username.as_deref().unwrap_or("-")
+                    );
+                }
             }
         }
     }

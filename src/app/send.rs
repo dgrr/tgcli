@@ -13,6 +13,15 @@ use std::path::Path;
 use std::time::Duration;
 use tl::enums::SendMessageAction;
 
+/// Result from searching chats via Telegram API.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SearchChatResult {
+    pub id: i64,
+    pub kind: String,
+    pub name: String,
+    pub username: Option<String>,
+}
+
 /// Decode a file_id string back to its components.
 /// Returns (doc_id, access_hash, file_reference)
 fn decode_file_id(file_id: &str) -> Result<(i64, i64, Vec<u8>)> {
@@ -1402,6 +1411,73 @@ impl App {
             "User {} not found. Make sure the user is in your contacts or chat list. Run `tgcli sync` to refresh.",
             user_id
         );
+    }
+
+    /// Search for chats by name via Telegram API.
+    /// Returns a list of matching chats (users, groups, channels).
+    pub async fn search_chats(&self, query: &str, limit: usize) -> Result<Vec<SearchChatResult>> {
+        let request = tl::functions::contacts::Search {
+            q: query.to_string(),
+            limit: limit as i32,
+        };
+
+        let result = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to search for '{}'", query))?;
+
+        let (chats, users) = match result {
+            tl::enums::contacts::Found::Found(f) => (f.chats, f.users),
+        };
+
+        let mut results = Vec::new();
+
+        // Process users
+        for user in users {
+            if let tl::enums::User::User(u) = user {
+                let name = format!(
+                    "{} {}",
+                    u.first_name.as_deref().unwrap_or(""),
+                    u.last_name.as_deref().unwrap_or("")
+                )
+                .trim()
+                .to_string();
+                results.push(SearchChatResult {
+                    id: u.id,
+                    kind: "user".to_string(),
+                    name,
+                    username: u.username,
+                });
+            }
+        }
+
+        // Process chats
+        for chat in chats {
+            match chat {
+                tl::enums::Chat::Chat(c) => {
+                    results.push(SearchChatResult {
+                        id: c.id,
+                        kind: "group".to_string(),
+                        name: c.title,
+                        username: None,
+                    });
+                }
+                tl::enums::Chat::Channel(c) => {
+                    let kind = if c.broadcast { "channel" } else { "supergroup" };
+                    results.push(SearchChatResult {
+                        id: c.id,
+                        kind: kind.to_string(),
+                        name: c.title,
+                        username: c.username,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Ok(results)
     }
 
     /// Resolve a user ID to InputPeer for ban operations.
