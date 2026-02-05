@@ -84,8 +84,9 @@ impl Store {
             .context("Failed to open database")?;
         let conn = db.connect().context("Failed to connect to database")?;
 
-        conn.execute("PRAGMA journal_mode=WAL", ()).await?;
-        conn.execute("PRAGMA busy_timeout=5000", ()).await?;
+        // PRAGMAs that set values return the new value, so use query and ignore results
+        let _ = conn.query("PRAGMA journal_mode=WAL", ()).await;
+        let _ = conn.query("PRAGMA busy_timeout=5000", ()).await;
 
         let mut store = Store {
             conn,
@@ -96,76 +97,128 @@ impl Store {
     }
 
     async fn migrate(&mut self) -> Result<()> {
+        // Create tables one at a time (turso execute doesn't support multiple statements)
         self.conn
             .execute(
-                "
-            CREATE TABLE IF NOT EXISTS chats (
-                id INTEGER PRIMARY KEY,
-                kind TEXT NOT NULL DEFAULT 'user',
-                name TEXT NOT NULL DEFAULT '',
-                username TEXT,
-                last_message_ts TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS contacts (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT NOT NULL DEFAULT '',
-                last_name TEXT NOT NULL DEFAULT '',
-                phone TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER NOT NULL,
-                chat_id INTEGER NOT NULL,
-                sender_id INTEGER NOT NULL DEFAULT 0,
-                ts TEXT NOT NULL,
-                edit_ts TEXT,
-                from_me INTEGER NOT NULL DEFAULT 0,
-                text TEXT NOT NULL DEFAULT '',
-                media_type TEXT,
-                reply_to_id INTEGER,
-                PRIMARY KEY (chat_id, id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts);
-            CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
-            CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
-            ",
+                "CREATE TABLE IF NOT EXISTS chats (
+                    id INTEGER PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT 'user',
+                    name TEXT NOT NULL DEFAULT '',
+                    username TEXT,
+                    last_message_ts TEXT
+                )",
                 (),
             )
             .await
-            .context("Failed to create base tables")?;
+            .context("Failed to create chats table")?;
+
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS contacts (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT NOT NULL DEFAULT '',
+                    last_name TEXT NOT NULL DEFAULT '',
+                    phone TEXT NOT NULL DEFAULT ''
+                )",
+                (),
+            )
+            .await
+            .context("Failed to create contacts table")?;
+
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    sender_id INTEGER NOT NULL DEFAULT 0,
+                    ts TEXT NOT NULL,
+                    edit_ts TEXT,
+                    from_me INTEGER NOT NULL DEFAULT 0,
+                    text TEXT NOT NULL DEFAULT '',
+                    media_type TEXT,
+                    reply_to_id INTEGER,
+                    PRIMARY KEY (chat_id, id)
+                )",
+                (),
+            )
+            .await
+            .context("Failed to create messages table")?;
+
+        self.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts)",
+                (),
+            )
+            .await?;
+        self.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)",
+                (),
+            )
+            .await?;
+        self.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)",
+                (),
+            )
+            .await?;
 
         // Try to create FTS5 table
         let fts_result = self
             .conn
             .execute(
-                "
-            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-                text,
-                content='messages',
-                content_rowid='rowid'
-            );
+                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                    text,
+                    content='messages',
+                    content_rowid='rowid'
+                )",
+                (),
+            )
+            .await;
+        
+        if fts_result.is_err() {
+            self.has_fts = false;
+            log::warn!("FTS5 not available, search will use LIKE fallback");
+            return Ok(());
+        }
 
-            CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-            END;
-            CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-            END;
-            CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-                INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-            END;
-            ",
+        // Create triggers for FTS
+        let trigger1 = self
+            .conn
+            .execute(
+                "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+                    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+                END",
                 (),
             )
             .await;
 
-        self.has_fts = fts_result.is_ok();
+        let trigger2 = self
+            .conn
+            .execute(
+                "CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+                END",
+                (),
+            )
+            .await;
+
+        let trigger3 = self
+            .conn
+            .execute(
+                "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+                    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+                    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+                END",
+                (),
+            )
+            .await;
+
+        // All FTS setup succeeded
+        self.has_fts = trigger1.is_ok() && trigger2.is_ok() && trigger3.is_ok();
         if !self.has_fts {
-            log::warn!("FTS5 not available, search will use LIKE fallback");
+            log::warn!("FTS5 triggers failed, search will use LIKE fallback");
         }
 
         Ok(())
