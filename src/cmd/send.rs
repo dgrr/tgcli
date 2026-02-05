@@ -21,6 +21,10 @@ pub struct SendArgs {
     /// Forum topic ID (for sending to a specific topic in a forum/supergroup)
     #[arg(long)]
     pub topic: Option<i32>,
+
+    /// Reply to a specific message ID
+    #[arg(long)]
+    pub reply_to: Option<i32>,
 }
 
 pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
@@ -54,8 +58,11 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         .as_ref()
         .expect("message required when no sticker");
 
-    // Try socket first (sync process may be running) - but not for topic messages yet
-    if args.topic.is_none() && crate::app::socket::is_socket_available(&store_dir) {
+    // Try socket first (sync process may be running) - but not for topic/reply messages yet
+    if args.topic.is_none()
+        && args.reply_to.is_none()
+        && crate::app::socket::is_socket_available(&store_dir)
+    {
         let resp = crate::app::socket::send_request(
             &store_dir,
             crate::app::socket::SocketRequest::SendText {
@@ -81,11 +88,13 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         }
     }
 
-    // Direct connection (required for topic messages)
+    // Direct connection (required for topic/reply messages)
     let mut app = App::new(cli).await?;
 
     let msg_id = if let Some(topic_id) = args.topic {
         app.send_text_to_topic(args.to, topic_id, message).await?
+    } else if let Some(reply_to_id) = args.reply_to {
+        app.send_text_reply(args.to, message, reply_to_id).await?
     } else {
         app.send_text(args.to, message).await?
     };
@@ -99,9 +108,14 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         if let Some(topic_id) = args.topic {
             json["topic"] = serde_json::json!(topic_id);
         }
+        if let Some(reply_to_id) = args.reply_to {
+            json["reply_to"] = serde_json::json!(reply_to_id);
+        }
         out::write_json(&json)?;
     } else if let Some(topic_id) = args.topic {
         println!("Sent to {} topic {}", args.to, topic_id);
+    } else if let Some(reply_to_id) = args.reply_to {
+        println!("Sent reply to {} (replying to {})", args.to, reply_to_id);
     } else {
         println!("Sent to {}", args.to);
     }

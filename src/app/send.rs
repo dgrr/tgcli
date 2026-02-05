@@ -56,6 +56,81 @@ impl App {
         Ok(msg.id() as i64)
     }
 
+    /// Send a text message as a reply to another message, returns the message ID.
+    pub async fn send_text_reply(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        reply_to_msg_id: i32,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let random_id: i64 = rand::rng().random();
+
+        let request = tl::functions::messages::SendMessage {
+            no_webpage: true,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: Some(
+                tl::types::InputReplyToMessage {
+                    reply_to_msg_id,
+                    top_msg_id: None,
+                    reply_to_peer_id: None,
+                    quote_text: None,
+                    quote_entities: None,
+                    quote_offset: None,
+                    monoforum_peer_id: None,
+                    todo_item_id: None,
+                }
+                .into(),
+            ),
+            message: text.to_string(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self.tg.client.invoke(&request).await?;
+        let msg_id = Self::extract_message_id_from_updates(&updates)?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg_id,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: text.to_string(),
+                media_type: None,
+                media_path: None,
+                reply_to_id: Some(reply_to_msg_id as i64),
+                topic_id: None,
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg_id)
+    }
+
     /// Send a text message to a specific forum topic by ID, returns the message ID.
     /// Uses raw TL invocation to set top_msg_id for topic support.
     pub async fn send_text_to_topic(
