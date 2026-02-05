@@ -4,7 +4,7 @@ pub mod contacts;
 pub mod messages;
 pub mod read;
 pub mod send;
-// pub mod stickers; // TODO: fix API compatibility issues
+pub mod stickers;
 pub mod sync;
 pub mod version;
 
@@ -36,11 +36,11 @@ pub enum Command {
     },
     /// Mark messages as read
     Read(read::ReadArgs),
-    // /// List, show, and search stickers
-    // Stickers {
-    //     #[command(subcommand)]
-    //     cmd: stickers::StickersCommand,
-    // },
+    /// List, show, and search stickers
+    Stickers {
+        #[command(subcommand)]
+        cmd: stickers::StickersCommand,
+    },
     /// Show version info
     Version,
 }
@@ -54,7 +54,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Send(args) => send::run(&cli, args).await,
         Command::Contacts { cmd } => contacts::run(&cli, cmd).await,
         Command::Read(args) => read::run(&cli, args).await,
-        // Command::Stickers { cmd } => stickers::run(&cli, cmd).await,
+        Command::Stickers { cmd } => stickers::run(&cli, cmd).await,
         Command::Version => {
             version::run(&cli);
             Ok(())
