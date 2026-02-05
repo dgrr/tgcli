@@ -13,11 +13,6 @@ use std::time::Duration;
 const INCREMENTAL_MAX_MESSAGES: usize = 10000;
 
 #[derive(Debug, Clone, Copy)]
-pub enum SyncMode {
-    Once,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub enum OutputMode {
     None,
     Text,
@@ -27,11 +22,9 @@ pub enum OutputMode {
 }
 
 pub struct SyncOptions {
-    pub mode: SyncMode,
     pub output: OutputMode,
     pub mark_read: bool,
     pub download_media: bool,
-    pub idle_exit_secs: u64,
     pub ignore_chat_ids: Vec<i64>,
     pub ignore_channels: bool,
     pub show_progress: bool,

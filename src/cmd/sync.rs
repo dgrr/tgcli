@@ -6,15 +6,7 @@ use clap::Args;
 
 #[derive(Args, Debug, Clone)]
 pub struct SyncArgs {
-    /// Sync once and exit after idle
-    #[arg(long, default_value_t = false)]
-    pub once: bool,
-
-    /// Incremental sync: only fetch messages newer than last sync (default: true)
-    #[arg(long, default_value_t = true)]
-    pub incremental: bool,
-
-    /// Full sync: fetch all messages regardless of last sync state
+    /// Full sync: fetch all messages (default: incremental, only new messages)
     #[arg(long, default_value_t = false)]
     pub full: bool,
 
@@ -33,10 +25,6 @@ pub struct SyncArgs {
     /// Stream messages as JSONL (one JSON object per line, implies --output json)
     #[arg(long, default_value_t = false)]
     pub stream: bool,
-
-    /// Idle exit timeout in seconds (for --once mode)
-    #[arg(long, default_value = "30")]
-    pub idle_exit: u64,
 
     /// Chat IDs to ignore (skip during sync)
     #[arg(long = "ignore", value_name = "CHAT_ID")]
@@ -58,8 +46,6 @@ pub struct SyncArgs {
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
     let mut app = App::new(cli).await?;
 
-    let mode = crate::app::sync::SyncMode::Once;
-
     let output_mode = if args.stream {
         crate::app::sync::OutputMode::Stream
     } else {
@@ -70,15 +56,13 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         }
     };
 
-    // --full overrides --incremental
-    let incremental = args.incremental && !args.full;
+    // Default is incremental; --full overrides
+    let incremental = !args.full;
 
     let opts = crate::app::sync::SyncOptions {
-        mode,
         output: output_mode,
         mark_read: args.mark_read,
         download_media: args.download_media,
-        idle_exit_secs: args.idle_exit,
         ignore_chat_ids: args.ignore_chat_ids.clone(),
         ignore_channels: args.ignore_channels,
         show_progress: !args.no_progress,
