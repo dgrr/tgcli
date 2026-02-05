@@ -609,3 +609,63 @@ impl<T> TgErrorContext<T> for std::result::Result<T, InvocationError> {
 
 // Note: TgErrorContext is only implemented for Result<T, InvocationError>.
 // For other error types, use anyhow's standard .context() method.
+
+/// Check if an InvocationError is a FLOOD_WAIT and return the wait duration.
+/// Returns Some(duration) if it's a FLOOD_WAIT, None otherwise.
+#[allow(dead_code)]
+pub fn get_flood_wait_duration(err: &InvocationError) -> Option<std::time::Duration> {
+    match err {
+        InvocationError::Rpc(rpc) if rpc.is("FLOOD_WAIT") => {
+            let secs = rpc.value.unwrap_or(0) as u64;
+            Some(std::time::Duration::from_secs(secs))
+        }
+        _ => None,
+    }
+}
+
+/// Retry an async operation with automatic FLOOD_WAIT handling.
+///
+/// If a FLOOD_WAIT error is encountered, this function will:
+/// 1. Log a warning with the wait duration
+/// 2. Sleep for the required duration
+/// 3. Retry the operation
+///
+/// # Arguments
+/// * `max_retries` - Maximum number of retries (0 = no retries)
+/// * `operation` - Async closure that performs the operation
+#[allow(dead_code)]
+pub async fn with_flood_wait_retry<T, F, Fut>(
+    max_retries: u32,
+    operation: F,
+) -> std::result::Result<T, InvocationError>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, InvocationError>>,
+{
+    let mut retries = 0;
+    loop {
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                if let Some(wait_duration) = get_flood_wait_duration(&e) {
+                    if retries < max_retries {
+                        retries += 1;
+                        let secs = wait_duration.as_secs();
+                        if secs > 0 {
+                            log::warn!(
+                                "FLOOD_WAIT: Telegram rate limit hit. Waiting {} seconds before retry {}/{}...",
+                                secs,
+                                retries,
+                                max_retries
+                            );
+                            eprintln!("Rate limited by Telegram. Waiting {} seconds...", secs);
+                            tokio::time::sleep(wait_duration).await;
+                            continue;
+                        }
+                    }
+                }
+                return Err(e);
+            }
+        }
+    }
+}
