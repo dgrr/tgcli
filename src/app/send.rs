@@ -242,6 +242,46 @@ impl App {
         }
     }
 
+    /// Pin a message in a chat.
+    pub async fn pin_message(
+        &self,
+        chat_id: i64,
+        msg_id: i64,
+        silent: bool,
+        pm_oneside: bool,
+    ) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let request = tl::functions::messages::UpdatePinnedMessage {
+            silent,
+            unpin: false,
+            pm_oneside,
+            peer: input_peer,
+            id: msg_id as i32,
+        };
+
+        self.tg.client.invoke(&request).await?;
+        Ok(())
+    }
+
+    /// Unpin a message in a chat.
+    pub async fn unpin_message(&self, chat_id: i64, msg_id: i64, pm_oneside: bool) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let request = tl::functions::messages::UpdatePinnedMessage {
+            silent: true,
+            unpin: true,
+            pm_oneside,
+            peer: input_peer,
+            id: msg_id as i32,
+        };
+
+        self.tg.client.invoke(&request).await?;
+        Ok(())
+    }
+
     /// Edit a message's text.
     pub async fn edit_message(&self, chat_id: i64, msg_id: i64, new_text: &str) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;

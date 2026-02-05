@@ -123,6 +123,33 @@ pub enum MessagesCommand {
         #[arg(long)]
         text: String,
     },
+    /// Pin a message in a chat
+    Pin {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID to pin
+        #[arg(long)]
+        id: i64,
+        /// Pin silently (no notification)
+        #[arg(long)]
+        silent: bool,
+        /// Pin only for yourself (not visible to others)
+        #[arg(long)]
+        pm_oneside: bool,
+    },
+    /// Unpin a message in a chat
+    Unpin {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID to unpin
+        #[arg(long)]
+        id: i64,
+        /// Unpin only for yourself
+        #[arg(long)]
+        pm_oneside: bool,
+    },
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
@@ -404,6 +431,43 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 }))?;
             } else {
                 println!("Edited message {} in chat {}", id, chat);
+            }
+        }
+        MessagesCommand::Pin {
+            chat,
+            id,
+            silent,
+            pm_oneside,
+        } => {
+            // Pin requires network access
+            let app = App::new(cli).await?;
+
+            app.pin_message(*chat, *id, *silent, *pm_oneside).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "pinned": true,
+                    "chat_id": chat,
+                    "message_id": id,
+                }))?;
+            } else {
+                println!("Pinned message {} in chat {}", id, chat);
+            }
+        }
+        MessagesCommand::Unpin { chat, id, pm_oneside } => {
+            // Unpin requires network access
+            let app = App::new(cli).await?;
+
+            app.unpin_message(*chat, *id, *pm_oneside).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "unpinned": true,
+                    "chat_id": chat,
+                    "message_id": id,
+                }))?;
+            } else {
+                println!("Unpinned message {} in chat {}", id, chat);
             }
         }
     }
