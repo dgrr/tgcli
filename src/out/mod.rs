@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::ValueEnum;
 use serde::Serialize;
+use std::fmt::Display;
 
 /// Output mode for CLI commands
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -21,6 +22,35 @@ impl OutputMode {
 
     pub fn is_none(&self) -> bool {
         matches!(self, OutputMode::None)
+    }
+
+    /// Write data to stdout based on output mode.
+    /// - `Text`: uses Display trait
+    /// - `Json`: uses Serialize trait (pretty-printed)
+    /// - `None`: no output
+    pub fn write<T: Display + Serialize>(&self, data: &T) {
+        match self {
+            OutputMode::None => {}
+            OutputMode::Text => println!("{}", data),
+            OutputMode::Json => {
+                if let Ok(json) = serde_json::to_string_pretty(data) {
+                    println!("{}", json);
+                }
+            }
+        }
+    }
+
+    /// Write data to stderr based on output mode.
+    pub fn write_err<T: Display + Serialize>(&self, data: &T) {
+        match self {
+            OutputMode::None => {}
+            OutputMode::Text => eprintln!("{}", data),
+            OutputMode::Json => {
+                if let Ok(json) = serde_json::to_string_pretty(data) {
+                    eprintln!("{}", json);
+                }
+            }
+        }
     }
 }
 
