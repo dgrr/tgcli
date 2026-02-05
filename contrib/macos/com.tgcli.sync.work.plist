@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 
+  Multi-account example: rename this file for each account
+  e.g., com.tgcli.sync.work.plist, com.tgcli.sync.personal.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tgcli.sync.work</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/tgcli</string>
+        <!-- Point to separate data directory for this account -->
+        <string>--store</string>
+        <string>/Users/YOU/.tgcli-work</string>
+        <string>sync</string>
+        <string>--follow</string>
+        <string>--socket</string>
+    </array>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/tgcli-work.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/tgcli-work.err</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

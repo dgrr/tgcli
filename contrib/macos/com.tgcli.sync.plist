@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tgcli.sync</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Update path if installed elsewhere -->
+        <string>/opt/homebrew/bin/tgcli</string>
+        <string>sync</string>
+        <string>--follow</string>
+        <string>--socket</string>
+        <!-- Uncomment to ignore specific chats -->
+        <!-- <string>--ignore</string> -->
+        <!-- <string>YOUR_CHAT_ID</string> -->
+        <!-- Uncomment to ignore all channels -->
+        <!-- <string>--ignore-channels</string> -->
+    </array>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/tgcli.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/tgcli.err</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

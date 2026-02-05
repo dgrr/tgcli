@@ -1,0 +1,24 @@
+[Unit]
+Description=tgcli Telegram sync daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tgcli sync --follow --socket
+# Uncomment for custom store path (multi-account):
+# ExecStart=/usr/local/bin/tgcli --store %h/.tgcli-work sync --follow --socket
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tgcli
+
+# Security hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
