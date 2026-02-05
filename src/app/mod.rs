@@ -29,7 +29,7 @@ impl App {
         let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)?;
 
         if !tg.client.is_authorized().await? {
-            anyhow::bail!("Session expired or not authenticated. Run `tgrs auth` first.");
+            anyhow::bail!("Session expired or not authenticated. Run `tgcli auth` first.");
         }
 
         let store = Store::open(&store_dir).await?;

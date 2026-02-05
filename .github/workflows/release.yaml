@@ -57,14 +57,14 @@ jobs:
       - name: Package binary
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/tgrs dist/tgrs-${{ matrix.name }}
-          chmod +x dist/tgrs-${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/tgcli dist/tgcli-${{ matrix.name }}
+          chmod +x dist/tgcli-${{ matrix.name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tgrs-${{ matrix.name }}
-          path: dist/tgrs-${{ matrix.name }}
+          name: tgcli-${{ matrix.name }}
+          path: dist/tgcli-${{ matrix.name }}
 
   release:
     name: Create Release
@@ -81,7 +81,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release
-          for dir in artifacts/tgrs-*; do
+          for dir in artifacts/tgcli-*; do
             name=$(basename "$dir")
             cp "$dir"/* "release/"
           done

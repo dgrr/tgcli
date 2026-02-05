@@ -1,12 +1,12 @@
 [package]
-name = "tgrs"
+name = "tgcli"
 version = "0.1.0"
 edition = "2021"
 authors = ["Dario <me@dgrp.es>"]
 description = "Telegram CLI tool using grammers (pure Rust MTProto)"
 
 [[bin]]
-name = "tgrs"
+name = "tgcli"
 path = "src/main.rs"
 
 [dependencies]

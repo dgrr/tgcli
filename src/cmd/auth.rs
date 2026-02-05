@@ -110,7 +110,7 @@ async fn status(cli: &Cli) -> Result<()> {
                 "authenticated": false,
             }))?;
         } else {
-            println!("Not authenticated. Run `tgrs auth`.");
+            println!("Not authenticated. Run `tgcli auth`.");
         }
         return Ok(());
     }
@@ -125,7 +125,7 @@ async fn status(cli: &Cli) -> Result<()> {
             } else if authed {
                 println!("Authenticated.");
             } else {
-                println!("Session exists but not authenticated. Run `tgrs auth`.");
+                println!("Session exists but not authenticated. Run `tgcli auth`.");
             }
         }
         Err(_) => {
@@ -135,7 +135,7 @@ async fn status(cli: &Cli) -> Result<()> {
                     "error": "Failed to connect",
                 }))?;
             } else {
-                println!("Session exists but failed to connect. Try `tgrs auth`.");
+                println!("Session exists but failed to connect. Try `tgcli auth`.");
             }
         }
     }

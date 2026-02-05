@@ -8,10 +8,10 @@ use clap::Parser;
 use std::time::Duration;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "tgrs", version, about = "Telegram CLI (pure Rust, no TDLib)")]
+#[command(name = "tgcli", version, about = "Telegram CLI (pure Rust, no TDLib)")]
 pub struct Cli {
-    /// Store directory (default: ~/.tgrs)
-    #[arg(long, global = true, default_value = "~/.tgrs")]
+    /// Store directory (default: ~/.tgcli)
+    #[arg(long, global = true, default_value = "~/.tgcli")]
     pub store: String,
 
     /// Output JSON instead of human-readable text

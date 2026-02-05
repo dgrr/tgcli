@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# tgrs installer - downloads the appropriate binary from GitHub releases
-# Usage: curl -fsSL https://raw.githubusercontent.com/dgrr/tgrs/main/install.sh | bash
+# tgcli installer - downloads the appropriate binary from GitHub releases
+# Usage: curl -fsSL https://raw.githubusercontent.com/dgrr/tgcli/main/install.sh | bash
 
-REPO="dgrr/tgrs"
-BINARY="tgrs"
+REPO="dgrr/tgcli"
+BINARY="tgcli"
 INSTALL_DIR="${INSTALL_DIR:-}"
 
 # Detect OS

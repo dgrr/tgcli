@@ -76,7 +76,7 @@ pub struct UpsertMessageParams {
 impl Store {
     pub async fn open(store_dir: &str) -> Result<Self> {
         std::fs::create_dir_all(store_dir)?;
-        let db_path = Path::new(store_dir).join("tgrs.db");
+        let db_path = Path::new(store_dir).join("tgcli.db");
         let db_path_str = db_path.to_string_lossy();
         let db: Database = Builder::new_local(&db_path_str)
             .build()

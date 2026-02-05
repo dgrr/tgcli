@@ -4,7 +4,7 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
-const SOCKET_NAME: &str = "tgrs.sock";
+const SOCKET_NAME: &str = "tgcli.sock";
 
 fn socket_path(store_dir: &str) -> String {
     format!("{}/{}", store_dir, SOCKET_NAME)

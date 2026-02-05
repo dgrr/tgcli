@@ -8,7 +8,7 @@ debug:
     cargo build
 
 install: build
-    cp target/release/tgrs /opt/homebrew/bin/tgrs
+    cp target/release/tgcli /opt/homebrew/bin/tgcli
 
 clean:
     cargo clean

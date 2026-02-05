@@ -1,18 +1,18 @@
-# tgrs
+# tgcli
 
 Telegram CLI tool in **pure Rust** using [grammers](https://github.com/Lonami/grammers) (MTProto). No TDLib, no C/C++ dependencies. `cargo build` and done.
 
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dgrr/tgrs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dgrr/tgcli/main/install.sh | bash
 ```
 
 Or build from source:
 
 ```bash
 cargo build --release
-cp target/release/tgrs /usr/local/bin/
+cp target/release/tgcli /usr/local/bin/
 ```
 
 ## Features
@@ -37,19 +37,19 @@ just build
 just install  # copies to /opt/homebrew/bin
 
 # Authenticate
-tgrs auth
+tgcli auth
 
 # Sync messages
-tgrs sync --once
+tgcli sync --once
 
 # List chats
-tgrs chats list
+tgcli chats list
 
 # Search messages
-tgrs messages search "hello"
+tgcli messages search "hello"
 
 # Send a message
-tgrs send --to <chat_id> --message "Hello!"
+tgcli send --to <chat_id> --message "Hello!"
 ```
 
 ## Architecture
@@ -77,13 +77,17 @@ src/
 
 ## Storage
 
-- Session: `~/.tgrs/session.db` (grammers SqliteSession)
-- Data: `~/.tgrs/tgrs.db` (chats, contacts, messages + FTS5)
-- Socket: `~/.tgrs/tgrs.sock` (IPC for concurrent send during sync)
+- Session: `~/.tgcli/session.db` (grammers SqliteSession)
+- Data: `~/.tgcli/tgcli.db` (chats, contacts, messages + FTS5)
+- Socket: `~/.tgcli/tgcli.sock` (IPC for concurrent send during sync)
 
 ## Why Rust?
 
-The predecessor `tgcli` uses Go + TDLib (C++), requiring complex cross-compilation and system dependencies. `tgrs` is pure Rust — zero C/C++ deps, single `cargo build`, tiny binary.
+The Go version (`tgcli-go`) uses TDLib (C++), requiring complex cross-compilation and system dependencies. `tgcli` is pure Rust — zero C/C++ deps, single `cargo build`, tiny binary.
+
+## See Also
+
+- **[tgcli-go](https://github.com/dgrr/tgcli-go)** - Go/TDLib version (more features, requires TDLib)
 
 ## License
 
