@@ -91,26 +91,60 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             mode_str, result.messages_stored, result.chats_stored
         );
     } else {
-        // Default: Output summary for LLMs: chat_id, messages synced, chat name
-        // For forums, also show topic breakdown
-        for chat in &result.per_chat {
+        // Human-readable summary output
+        let chats_with_messages: Vec<_> = result
+            .per_chat
+            .iter()
+            .filter(|c| c.messages_synced > 0)
+            .collect();
+
+        if chats_with_messages.is_empty() {
+            eprintln!("No new messages.");
+        } else {
+            // Calculate max name length for alignment (including topic indent)
+            let mut max_name_len = 0;
+            for chat in &chats_with_messages {
+                max_name_len = max_name_len.max(chat.chat_name.len());
+                for topic in &chat.topics {
+                    // Topics get "  └ " prefix (4 chars) so add that to comparison
+                    max_name_len = max_name_len.max(topic.topic_name.len() + 4);
+                }
+            }
+
+            let plural = |n: u64| if n == 1 { "message" } else { "messages" };
+
             println!(
-                "{}\t{}\t{}",
-                chat.chat_id, chat.messages_synced, chat.chat_name
+                "Synced {} {}:",
+                chats_with_messages.len(),
+                if chats_with_messages.len() == 1 {
+                    "chat"
+                } else {
+                    "chats"
+                }
             );
-            // Show topic breakdown for forums
-            for topic in &chat.topics {
+
+            for chat in &chats_with_messages {
                 println!(
-                    "  {}\t{}\t{}",
-                    topic.topic_id, topic.messages_synced, topic.topic_name
+                    "  {:<width$}  +{} {}",
+                    chat.chat_name,
+                    chat.messages_synced,
+                    plural(chat.messages_synced),
+                    width = max_name_len
                 );
+                // Show topic breakdown for forums
+                for topic in &chat.topics {
+                    if topic.messages_synced > 0 {
+                        println!(
+                            "    └ {:<width$}  +{} {}",
+                            topic.topic_name,
+                            topic.messages_synced,
+                            plural(topic.messages_synced),
+                            width = max_name_len - 4
+                        );
+                    }
+                }
             }
         }
-        eprintln!(
-            "Total: {} messages across {} chats",
-            result.messages_stored,
-            result.per_chat.len()
-        );
     }
 
     Ok(())
