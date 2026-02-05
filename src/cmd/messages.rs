@@ -591,18 +591,16 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     "emoji": emoji,
                     "removed": remove,
                 }))?;
+            } else if *remove {
+                println!(
+                    "Removed reaction {} from message {} in chat {}",
+                    emoji, msg_id, chat
+                );
             } else {
-                if *remove {
-                    println!(
-                        "Removed reaction {} from message {} in chat {}",
-                        emoji, msg_id, chat
-                    );
-                } else {
-                    println!(
-                        "Added reaction {} to message {} in chat {}",
-                        emoji, msg_id, chat
-                    );
-                }
+                println!(
+                    "Added reaction {} to message {} in chat {}",
+                    emoji, msg_id, chat
+                );
             }
         }
     }

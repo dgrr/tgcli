@@ -77,9 +77,7 @@ async fn show_user(cli: &Cli, user_id: i64) -> Result<()> {
     } = result.into();
 
     // Get the UserFull data
-    let full = match full_user {
-        tl::enums::UserFull::Full(f) => f,
-    };
+    let tl::enums::UserFull::Full(full) = full_user;
 
     // Find the user in the users list
     let user = users.iter().find_map(|u| match u {
