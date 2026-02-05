@@ -82,6 +82,57 @@ pub enum ChatsCommand {
         #[arg(long, default_value = "0")]
         folder: i32,
     },
+    /// Ban a user from a group/channel
+    Ban {
+        /// Chat ID (group or channel)
+        #[arg(long)]
+        chat: i64,
+        /// User ID to ban
+        #[arg(long)]
+        user: i64,
+        /// Duration of ban (e.g., "1d", "1h", "forever") - default: forever
+        #[arg(long, default_value = "forever")]
+        duration: String,
+    },
+    /// Kick a user from a group/channel (they can rejoin)
+    Kick {
+        /// Chat ID (group or channel)
+        #[arg(long)]
+        chat: i64,
+        /// User ID to kick
+        #[arg(long)]
+        user: i64,
+    },
+    /// Unban a user from a group/channel
+    Unban {
+        /// Chat ID (group or channel)
+        #[arg(long)]
+        chat: i64,
+        /// User ID to unban
+        #[arg(long)]
+        user: i64,
+    },
+    /// Promote a user to admin in a group/channel
+    Promote {
+        /// Chat ID (group or channel)
+        #[arg(long)]
+        chat: i64,
+        /// User ID to promote
+        #[arg(long)]
+        user: i64,
+        /// Admin title (e.g., "Moderator")
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// Demote an admin to regular user
+    Demote {
+        /// Chat ID (group or channel)
+        #[arg(long)]
+        chat: i64,
+        /// User ID to demote
+        #[arg(long)]
+        user: i64,
+    },
 }
 
 #[derive(Serialize)]
@@ -365,8 +416,128 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             }
             batch_pin(cli, id, false, *folder).await?;
         }
+        ChatsCommand::Ban {
+            chat,
+            user,
+            duration,
+        } => {
+            let app = App::new(cli).await?;
+            let until_date = parse_ban_duration(duration)?;
+            app.ban_user(*chat, *user, until_date).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "action": "ban",
+                    "chat_id": chat,
+                    "user_id": user,
+                    "until_date": until_date,
+                }))?;
+            } else {
+                let duration_str = if until_date == 0 {
+                    "forever".to_string()
+                } else {
+                    let dt = chrono::DateTime::from_timestamp(until_date as i64, 0)
+                        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    format!("until {}", dt)
+                };
+                println!("Banned user {} from chat {} ({})", user, chat, duration_str);
+            }
+        }
+        ChatsCommand::Kick { chat, user } => {
+            let app = App::new(cli).await?;
+            app.kick_user(*chat, *user).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "action": "kick",
+                    "chat_id": chat,
+                    "user_id": user,
+                }))?;
+            } else {
+                println!("Kicked user {} from chat {}", user, chat);
+            }
+        }
+        ChatsCommand::Unban { chat, user } => {
+            let app = App::new(cli).await?;
+            app.unban_user(*chat, *user).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "action": "unban",
+                    "chat_id": chat,
+                    "user_id": user,
+                }))?;
+            } else {
+                println!("Unbanned user {} from chat {}", user, chat);
+            }
+        }
+        ChatsCommand::Promote { chat, user, title } => {
+            let app = App::new(cli).await?;
+            app.promote_user(*chat, *user, title.as_deref()).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "action": "promote",
+                    "chat_id": chat,
+                    "user_id": user,
+                    "title": title,
+                }))?;
+            } else if let Some(t) = title {
+                println!(
+                    "Promoted user {} to admin in chat {} (title: {})",
+                    user, chat, t
+                );
+            } else {
+                println!("Promoted user {} to admin in chat {}", user, chat);
+            }
+        }
+        ChatsCommand::Demote { chat, user } => {
+            let app = App::new(cli).await?;
+            app.demote_user(*chat, *user).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "action": "demote",
+                    "chat_id": chat,
+                    "user_id": user,
+                }))?;
+            } else {
+                println!("Demoted user {} in chat {}", user, chat);
+            }
+        }
     }
     Ok(())
+}
+
+/// Parse ban duration string to Unix timestamp (0 = forever)
+fn parse_ban_duration(duration: &str) -> Result<i32> {
+    if duration == "forever" || duration == "0" {
+        return Ok(0);
+    }
+
+    let now = chrono::Utc::now();
+    let secs = if duration.ends_with('d') {
+        duration
+            .trim_end_matches('d')
+            .parse::<i64>()
+            .map(|d| d * 86400)?
+    } else if duration.ends_with('h') {
+        duration
+            .trim_end_matches('h')
+            .parse::<i64>()
+            .map(|h| h * 3600)?
+    } else if duration.ends_with('m') {
+        duration
+            .trim_end_matches('m')
+            .parse::<i64>()
+            .map(|m| m * 60)?
+    } else {
+        // Try parsing as seconds
+        duration.parse::<i64>()?
+    };
+
+    Ok((now.timestamp() + secs) as i32)
 }
 
 /// List chats from a specific folder

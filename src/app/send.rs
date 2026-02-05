@@ -1102,6 +1102,326 @@ impl App {
         Ok(())
     }
 
+    /// Ban a user from a group or channel.
+    /// until_date: 0 = forever, otherwise Unix timestamp
+    pub async fn ban_user(&self, chat_id: i64, user_id: i64, until_date: i32) -> Result<()> {
+        let channel_peer = self.resolve_channel_input(chat_id).await?;
+        let user_peer = self.resolve_user_input_peer(user_id).await?;
+
+        let banned_rights = tl::types::ChatBannedRights {
+            view_messages: true,
+            send_messages: true,
+            send_media: true,
+            send_stickers: true,
+            send_gifs: true,
+            send_games: true,
+            send_inline: true,
+            embed_links: true,
+            send_polls: true,
+            change_info: true,
+            invite_users: true,
+            pin_messages: true,
+            manage_topics: true,
+            send_photos: true,
+            send_videos: true,
+            send_roundvideos: true,
+            send_audios: true,
+            send_voices: true,
+            send_docs: true,
+            send_plain: true,
+            until_date,
+        };
+
+        let request = tl::functions::channels::EditBanned {
+            channel: channel_peer,
+            participant: user_peer,
+            banned_rights: tl::enums::ChatBannedRights::Rights(banned_rights),
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to ban user {} from chat {}",
+            user_id, chat_id
+        ))?;
+
+        Ok(())
+    }
+
+    /// Kick a user from a group or channel (they can rejoin).
+    pub async fn kick_user(&self, chat_id: i64, user_id: i64) -> Result<()> {
+        let channel_peer = self.resolve_channel_input(chat_id).await?;
+        let user_peer = self.resolve_user_input_peer(user_id).await?;
+
+        // Kick = ban then immediately unban
+        let banned_rights = tl::types::ChatBannedRights {
+            view_messages: true,
+            send_messages: true,
+            send_media: true,
+            send_stickers: true,
+            send_gifs: true,
+            send_games: true,
+            send_inline: true,
+            embed_links: true,
+            send_polls: true,
+            change_info: true,
+            invite_users: true,
+            pin_messages: true,
+            manage_topics: true,
+            send_photos: true,
+            send_videos: true,
+            send_roundvideos: true,
+            send_audios: true,
+            send_voices: true,
+            send_docs: true,
+            send_plain: true,
+            until_date: 0, // Permanent ban first
+        };
+
+        let request = tl::functions::channels::EditBanned {
+            channel: channel_peer.clone(),
+            participant: user_peer.clone(),
+            banned_rights: tl::enums::ChatBannedRights::Rights(banned_rights),
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to kick user {} from chat {}",
+            user_id, chat_id
+        ))?;
+
+        // Now unban so they can rejoin
+        let unbanned_rights = tl::types::ChatBannedRights {
+            view_messages: false,
+            send_messages: false,
+            send_media: false,
+            send_stickers: false,
+            send_gifs: false,
+            send_games: false,
+            send_inline: false,
+            embed_links: false,
+            send_polls: false,
+            change_info: false,
+            invite_users: false,
+            pin_messages: false,
+            manage_topics: false,
+            send_photos: false,
+            send_videos: false,
+            send_roundvideos: false,
+            send_audios: false,
+            send_voices: false,
+            send_docs: false,
+            send_plain: false,
+            until_date: 0,
+        };
+
+        let unban_request = tl::functions::channels::EditBanned {
+            channel: channel_peer,
+            participant: user_peer,
+            banned_rights: tl::enums::ChatBannedRights::Rights(unbanned_rights),
+        };
+
+        self.tg
+            .client
+            .invoke(&unban_request)
+            .await
+            .context(format!(
+                "Failed to unban user {} after kick from chat {}",
+                user_id, chat_id
+            ))?;
+
+        Ok(())
+    }
+
+    /// Unban a user from a group or channel.
+    pub async fn unban_user(&self, chat_id: i64, user_id: i64) -> Result<()> {
+        let channel_peer = self.resolve_channel_input(chat_id).await?;
+        let user_peer = self.resolve_user_input_peer(user_id).await?;
+
+        let unbanned_rights = tl::types::ChatBannedRights {
+            view_messages: false,
+            send_messages: false,
+            send_media: false,
+            send_stickers: false,
+            send_gifs: false,
+            send_games: false,
+            send_inline: false,
+            embed_links: false,
+            send_polls: false,
+            change_info: false,
+            invite_users: false,
+            pin_messages: false,
+            manage_topics: false,
+            send_photos: false,
+            send_videos: false,
+            send_roundvideos: false,
+            send_audios: false,
+            send_voices: false,
+            send_docs: false,
+            send_plain: false,
+            until_date: 0,
+        };
+
+        let request = tl::functions::channels::EditBanned {
+            channel: channel_peer,
+            participant: user_peer,
+            banned_rights: tl::enums::ChatBannedRights::Rights(unbanned_rights),
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to unban user {} from chat {}",
+            user_id, chat_id
+        ))?;
+
+        Ok(())
+    }
+
+    /// Promote a user to admin in a group or channel.
+    pub async fn promote_user(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        title: Option<&str>,
+    ) -> Result<()> {
+        let channel_peer = self.resolve_channel_input(chat_id).await?;
+        let user_peer = self.resolve_user_input(user_id).await?;
+
+        // Grant typical moderator permissions
+        let admin_rights = tl::types::ChatAdminRights {
+            change_info: false,
+            post_messages: false,
+            edit_messages: false,
+            delete_messages: true,
+            ban_users: true,
+            invite_users: true,
+            pin_messages: true,
+            add_admins: false,
+            anonymous: false,
+            manage_call: false,
+            other: true,
+            manage_topics: true,
+            post_stories: false,
+            edit_stories: false,
+            delete_stories: false,
+            manage_direct_messages: false,
+        };
+
+        let request = tl::functions::channels::EditAdmin {
+            channel: channel_peer,
+            user_id: user_peer,
+            admin_rights: tl::enums::ChatAdminRights::Rights(admin_rights),
+            rank: title.unwrap_or("Admin").to_string(),
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to promote user {} in chat {}",
+            user_id, chat_id
+        ))?;
+
+        Ok(())
+    }
+
+    /// Demote an admin to regular user.
+    pub async fn demote_user(&self, chat_id: i64, user_id: i64) -> Result<()> {
+        let channel_peer = self.resolve_channel_input(chat_id).await?;
+        let user_peer = self.resolve_user_input(user_id).await?;
+
+        // Remove all admin rights
+        let admin_rights = tl::types::ChatAdminRights {
+            change_info: false,
+            post_messages: false,
+            edit_messages: false,
+            delete_messages: false,
+            ban_users: false,
+            invite_users: false,
+            pin_messages: false,
+            add_admins: false,
+            anonymous: false,
+            manage_call: false,
+            other: false,
+            manage_topics: false,
+            post_stories: false,
+            edit_stories: false,
+            delete_stories: false,
+            manage_direct_messages: false,
+        };
+
+        let request = tl::functions::channels::EditAdmin {
+            channel: channel_peer,
+            user_id: user_peer,
+            admin_rights: tl::enums::ChatAdminRights::Rights(admin_rights),
+            rank: String::new(),
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to demote user {} in chat {}",
+            user_id, chat_id
+        ))?;
+
+        Ok(())
+    }
+
+    /// Resolve a chat ID to InputChannel for admin operations.
+    async fn resolve_channel_input(&self, chat_id: i64) -> Result<tl::enums::InputChannel> {
+        // Resolve via dialogs (most reliable - gets fresh access_hash)
+        let mut dialogs = self.tg.client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await? {
+            let peer = dialog.peer();
+            if peer.id().bare_id() == chat_id {
+                let peer_ref = PeerRef::from(peer);
+                if let tl::enums::InputPeer::Channel(ch) = tl::enums::InputPeer::from(peer_ref) {
+                    return Ok(tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                        channel_id: ch.channel_id,
+                        access_hash: ch.access_hash,
+                    }));
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "Chat {} not found or is not a channel/supergroup. Admin operations require a channel or supergroup.",
+            chat_id
+        );
+    }
+
+    /// Resolve a user ID to InputUser for admin operations.
+    async fn resolve_user_input(&self, user_id: i64) -> Result<tl::enums::InputUser> {
+        // Resolve via dialogs
+        let mut dialogs = self.tg.client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await? {
+            let peer = dialog.peer();
+            if peer.id().bare_id() == user_id {
+                let peer_ref = PeerRef::from(peer);
+                if let tl::enums::InputPeer::User(u) = tl::enums::InputPeer::from(peer_ref) {
+                    return Ok(tl::enums::InputUser::User(tl::types::InputUser {
+                        user_id: u.user_id,
+                        access_hash: u.access_hash,
+                    }));
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "User {} not found. Make sure the user is in your contacts or chat list. Run `tgcli sync` to refresh.",
+            user_id
+        );
+    }
+
+    /// Resolve a user ID to InputPeer for ban operations.
+    async fn resolve_user_input_peer(&self, user_id: i64) -> Result<tl::enums::InputPeer> {
+        // Resolve via dialogs
+        let mut dialogs = self.tg.client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await? {
+            let peer = dialog.peer();
+            if peer.id().bare_id() == user_id {
+                let peer_ref = PeerRef::from(peer);
+                return Ok(tl::enums::InputPeer::from(peer_ref));
+            }
+        }
+
+        anyhow::bail!(
+            "User {} not found. Make sure the user is in your contacts or chat list. Run `tgcli sync` to refresh.",
+            user_id
+        );
+    }
+
     /// Global search across all chats via Telegram API.
     /// Returns messages matching the query.
     pub async fn global_search(
