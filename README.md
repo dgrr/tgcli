@@ -18,7 +18,7 @@ cp target/release/tgcli /usr/local/bin/
 ## Features
 
 - **Auth**: Phone → code → 2FA authentication
-- **Sync**: Bootstrap + live updates, stored in SQLite with FTS5
+- **Sync**: Bootstrap + live updates, stored in libSQL (turso) with FTS5
 - **Chats**: List and show chats from local DB
 - **Messages**: List, search (FTS5), context view, show
 - **Send**: Text messages (direct or via Unix socket IPC)
@@ -66,7 +66,7 @@ src/
     contacts.rs    Search/show contacts
     read.rs        Mark as read
     version.rs     Version info
-  store/           SQLite + FTS5 storage
+  store/           turso (libSQL) + FTS5 storage
   tg/              grammers client wrapper
   app/             App struct + business logic
     sync.rs        Sync logic
@@ -84,6 +84,8 @@ src/
 ## Why Rust?
 
 The Go version (`tgcli-go`) uses TDLib (C++), requiring complex cross-compilation and system dependencies. `tgcli` is pure Rust — zero C/C++ deps, single `cargo build`, tiny binary.
+
+Uses [turso](https://github.com/tursodatabase/libsql) for database storage — a pure Rust libSQL implementation with no native compilation required.
 
 ## See Also
 

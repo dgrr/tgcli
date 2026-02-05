@@ -87,7 +87,7 @@ tgcli --store ~/.tgcli-work chats list
 ## Storage Paths
 
 - Session: `~/.tgcli/session.db`
-- Database: `~/.tgcli/tgcli.db` (SQLite/libSQL + FTS5)
+- Database: `~/.tgcli/tgcli.db` (turso/libSQL + FTS5, pure Rust)
 - Socket: `~/.tgcli/tgcli.sock`
 
 ## Socket IPC
