@@ -122,6 +122,67 @@ tgcli messages list --chat 123456 --json > messages.json
 
 ## Best Practices for AI Agents
 
+### Setup Workflow
+
+After authentication and initial sync, follow these steps to set up tgcli as a background service:
+
+1. **Auth & Initial Sync**
+   ```bash
+   tgcli auth
+   tgcli sync --once
+   ```
+
+2. **Find Your Chat ID**
+   ```bash
+   tgcli chats list | grep -i "your_bot_name"
+   # Note the chat ID (e.g., 123456789)
+   ```
+
+3. **Soft Delete Your Chat from DB** (removes from local DB only, not from Telegram)
+   ```bash
+   tgcli chats delete <your_chat_id>
+   ```
+
+4. **Install as launchd Service** (macOS)
+   ```bash
+   cat > ~/Library/LaunchAgents/com.tgcli.sync.plist << 'EOF'
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+       <key>Label</key>
+       <string>com.tgcli.sync</string>
+       <key>ProgramArguments</key>
+       <array>
+           <string>/opt/homebrew/bin/tgcli</string>
+           <string>sync</string>
+           <string>--follow</string>
+           <string>--socket</string>
+           <string>--ignore</string>
+           <string>YOUR_CHAT_ID</string>
+       </array>
+       <key>RunAtLoad</key>
+       <true/>
+       <key>KeepAlive</key>
+       <true/>
+       <key>StandardOutPath</key>
+       <string>/tmp/tgcli.log</string>
+       <key>StandardErrorPath</key>
+       <string>/tmp/tgcli.err</string>
+   </dict>
+   </plist>
+   EOF
+   
+   launchctl load ~/Library/LaunchAgents/com.tgcli.sync.plist
+   ```
+
+5. **For Multi-Account**, create separate plists with `--store` flag:
+   ```bash
+   # In ProgramArguments, add before "sync":
+   <string>--store</string>
+   <string>/Users/YOU/.tgcli-work</string>
+   ```
+
 ### Exclude Your Own Chat from Sync
 
 If you're an AI agent with a dedicated Telegram chat for user communication, **always exclude that chat from sync and message listings**. This prevents:
@@ -141,8 +202,6 @@ tgcli messages search "keyword" --ignore 123456789
 # Combine with channel exclusion for cleaner results
 tgcli sync --follow --ignore 123456789 --ignore-channels
 ```
-
-**How to find your chat ID:** Run `tgcli chats list` and locate your agent's conversation with the user.
 
 **Tip:** Store the chat ID to ignore in your local config/notes so you don't have to look it up each session.
 
