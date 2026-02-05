@@ -99,6 +99,18 @@ pub enum MessagesCommand {
         #[arg(long = "id", value_name = "MSG_ID")]
         ids: Vec<i64>,
     },
+    /// Forward a message to another chat
+    Forward {
+        /// Source chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID to forward
+        #[arg(long)]
+        id: i64,
+        /// Destination chat ID
+        #[arg(long)]
+        to: i64,
+    },
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
@@ -342,6 +354,27 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     ids.len(),
                     chat,
                     deleted
+                );
+            }
+        }
+        MessagesCommand::Forward { chat, id, to } => {
+            // Forward requires network access
+            let app = App::new(cli).await?;
+
+            let new_msg_id = app.forward_message(*chat, *id, *to).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "forwarded": true,
+                    "from_chat": chat,
+                    "message_id": id,
+                    "to_chat": to,
+                    "new_message_id": new_msg_id,
+                }))?;
+            } else {
+                println!(
+                    "Forwarded message {} from {} to {} (new ID: {})",
+                    id, chat, to, new_msg_id
                 );
             }
         }

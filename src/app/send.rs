@@ -242,6 +242,49 @@ impl App {
         }
     }
 
+    /// Forward a message from one chat to another.
+    /// Returns the new message ID in the destination chat.
+    pub async fn forward_message(
+        &self,
+        from_chat_id: i64,
+        msg_id: i64,
+        to_chat_id: i64,
+    ) -> Result<i64> {
+        let from_peer = self.resolve_peer_ref(from_chat_id).await?;
+        let to_peer = self.resolve_peer_ref(to_chat_id).await?;
+
+        let from_input_peer: tl::enums::InputPeer = from_peer.into();
+        let to_input_peer: tl::enums::InputPeer = to_peer.into();
+
+        let random_id: i64 = rand::rng().random();
+
+        let request = tl::functions::messages::ForwardMessages {
+            silent: false,
+            background: false,
+            with_my_score: false,
+            drop_author: false,
+            drop_media_captions: false,
+            noforwards: false,
+            allow_paid_floodskip: false,
+            from_peer: from_input_peer,
+            id: vec![msg_id as i32],
+            random_id: vec![random_id],
+            to_peer: to_input_peer,
+            top_msg_id: None,
+            schedule_date: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            video_cover: None,
+            video_timestamp: None,
+            allow_paid_stars: None,
+        };
+
+        let updates = self.tg.client.invoke(&request).await?;
+        let new_msg_id = Self::extract_message_id_from_updates(&updates)?;
+
+        Ok(new_msg_id)
+    }
+
     /// Mark a chat as read.
     pub async fn mark_read(&mut self, chat_id: i64) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
