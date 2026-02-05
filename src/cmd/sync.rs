@@ -49,6 +49,10 @@ pub struct SyncArgs {
     /// Secret for HMAC-SHA256 signature (X-Signature header)
     #[arg(long, value_name = "SECRET")]
     pub webhook_secret: Option<String>,
+
+    /// Suppress progress output
+    #[arg(long, default_value_t = false)]
+    pub no_progress: bool,
 }
 
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
@@ -80,6 +84,7 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         ignore_channels: args.ignore_channels,
         webhook_url: args.webhook.clone(),
         webhook_secret: args.webhook_secret.clone(),
+        show_progress: !args.no_progress,
     };
 
     let result = app.sync(opts).await?;

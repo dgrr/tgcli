@@ -24,6 +24,9 @@ pub enum MessagesCommand {
         /// Number of messages to fetch
         #[arg(long, default_value = "100")]
         limit: usize,
+        /// Suppress progress output
+        #[arg(long, default_value_t = false)]
+        no_progress: bool,
     },
     /// List messages
     List {
@@ -219,7 +222,12 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
     let store = Store::open(&cli.store_dir()).await?;
 
     match cmd {
-        MessagesCommand::Fetch { chat, topic, limit } => {
+        MessagesCommand::Fetch {
+            chat,
+            topic,
+            limit,
+            no_progress,
+        } => {
             // Get oldest message ID we have for this chat
             let oldest_id = store.get_oldest_message_id(*chat, *topic).await?;
 
@@ -227,7 +235,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             let app = App::new(cli).await?;
 
             let fetched = app
-                .backfill_messages(*chat, *topic, oldest_id, *limit)
+                .backfill_messages_with_progress(*chat, *topic, oldest_id, *limit, !*no_progress)
                 .await?;
 
             if cli.json {

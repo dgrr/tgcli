@@ -38,6 +38,7 @@ pub struct SyncOptions {
     pub ignore_channels: bool,
     pub webhook_url: Option<String>,
     pub webhook_secret: Option<String>,
+    pub show_progress: bool,
 }
 
 /// Webhook client for posting new messages to an external URL
@@ -277,8 +278,14 @@ impl App {
 
         let client = &self.tg.client;
 
+        // Progress tracking
+        let mut last_progress_time = std::time::Instant::now();
+        let progress_interval = Duration::from_millis(500);
+
         // Phase 1: Bootstrap — fetch recent dialogs and their messages
-        eprintln!("Bootstrapping: fetching dialogs…");
+        if opts.show_progress {
+            eprint!("\rSyncing... 0 chats, 0 messages");
+        }
         let mut dialogs = client.iter_dialogs();
         while let Some(dialog) = dialogs
             .next()
@@ -368,6 +375,15 @@ impl App {
                     .await?;
                 messages_stored += 1;
 
+                // Show progress periodically
+                if opts.show_progress && last_progress_time.elapsed() >= progress_interval {
+                    eprint!(
+                        "\rSyncing... {} chats, {} messages",
+                        chats_stored, messages_stored
+                    );
+                    last_progress_time = std::time::Instant::now();
+                }
+
                 // Output
                 match opts.output {
                     OutputMode::Text => {
@@ -427,8 +443,12 @@ impl App {
             }
         }
 
+        if opts.show_progress {
+            // Clear progress line and print final status
+            eprint!("\r\x1b[K"); // Clear line
+        }
         eprintln!(
-            "Bootstrap complete: {} chats, {} messages",
+            "Sync complete: {} chats, {} messages",
             chats_stored, messages_stored
         );
 

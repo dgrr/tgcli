@@ -797,6 +797,19 @@ impl App {
         offset_id: Option<i64>,
         limit: usize,
     ) -> Result<usize> {
+        self.backfill_messages_with_progress(chat_id, topic_id, offset_id, limit, false)
+            .await
+    }
+
+    /// Backfill messages with optional progress output.
+    pub async fn backfill_messages_with_progress(
+        &self,
+        chat_id: i64,
+        topic_id: Option<i32>,
+        offset_id: Option<i64>,
+        limit: usize,
+        show_progress: bool,
+    ) -> Result<usize> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
 
         // Check if this chat is a forum
@@ -808,6 +821,14 @@ impl App {
         // Set offset_id if provided (fetch messages older than this)
         if let Some(oid) = offset_id {
             message_iter = message_iter.offset_id(oid as i32);
+        }
+
+        // Progress tracking
+        let progress_interval = std::time::Duration::from_millis(500);
+        let mut last_progress_time = std::time::Instant::now();
+
+        if show_progress {
+            eprint!("\rFetching... 0/{} messages", limit);
         }
 
         let mut count = 0;
@@ -849,6 +870,17 @@ impl App {
                 })
                 .await?;
             count += 1;
+
+            // Show progress periodically
+            if show_progress && last_progress_time.elapsed() >= progress_interval {
+                eprint!("\rFetching... {}/{} messages", count, limit);
+                last_progress_time = std::time::Instant::now();
+            }
+        }
+
+        if show_progress {
+            // Clear progress line
+            eprint!("\r\x1b[K");
         }
 
         Ok(count)
