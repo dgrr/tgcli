@@ -6,6 +6,7 @@ use chrono::Utc;
 use grammers_client::InputMessage;
 use grammers_session::defs::PeerRef;
 use grammers_tl_types as tl;
+use rand::Rng;
 
 /// Decode a file_id string back to its components.
 /// Returns (doc_id, access_hash, file_reference)
@@ -53,6 +54,117 @@ impl App {
             .await?;
 
         Ok(msg.id() as i64)
+    }
+
+    /// Send a text message to a specific forum topic by ID, returns the message ID.
+    /// Uses raw TL invocation to set top_msg_id for topic support.
+    pub async fn send_text_to_topic(
+        &mut self,
+        chat_id: i64,
+        topic_id: i32,
+        text: &str,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let random_id: i64 = rand::rng().random();
+
+        let request = tl::functions::messages::SendMessage {
+            no_webpage: true,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: Some(
+                tl::types::InputReplyToMessage {
+                    reply_to_msg_id: topic_id,
+                    top_msg_id: Some(topic_id),
+                    reply_to_peer_id: None,
+                    quote_text: None,
+                    quote_entities: None,
+                    quote_offset: None,
+                    monoforum_peer_id: None,
+                    todo_item_id: None,
+                }
+                .into(),
+            ),
+            message: text.to_string(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self.tg.client.invoke(&request).await?;
+
+        // Extract message ID from updates
+        let msg_id = Self::extract_message_id_from_updates(&updates)?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg_id,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: text.to_string(),
+                media_type: None,
+                media_path: None,
+                reply_to_id: None,
+                topic_id: Some(topic_id as i64),
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg_id)
+    }
+
+    /// Extract message ID from Updates response
+    fn extract_message_id_from_updates(updates: &tl::enums::Updates) -> Result<i64> {
+        match updates {
+            tl::enums::Updates::Updates(u) => {
+                for update in &u.updates {
+                    if let tl::enums::Update::NewMessage(m) = update {
+                        if let tl::enums::Message::Message(msg) = &m.message {
+                            return Ok(msg.id as i64);
+                        }
+                    }
+                    if let tl::enums::Update::NewChannelMessage(m) = update {
+                        if let tl::enums::Message::Message(msg) = &m.message {
+                            return Ok(msg.id as i64);
+                        }
+                    }
+                }
+                anyhow::bail!("No message ID found in Updates response")
+            }
+            tl::enums::Updates::UpdateShort(u) => {
+                if let tl::enums::Update::NewMessage(m) = &u.update {
+                    if let tl::enums::Message::Message(msg) = &m.message {
+                        return Ok(msg.id as i64);
+                    }
+                }
+                anyhow::bail!("No message ID found in UpdateShort response")
+            }
+            tl::enums::Updates::UpdateShortMessage(u) => Ok(u.id as i64),
+            tl::enums::Updates::UpdateShortChatMessage(u) => Ok(u.id as i64),
+            tl::enums::Updates::UpdateShortSentMessage(u) => Ok(u.id as i64),
+            _ => anyhow::bail!("Unexpected Updates type"),
+        }
     }
 
     /// Mark a chat as read.

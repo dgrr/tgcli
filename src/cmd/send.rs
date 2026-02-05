@@ -17,6 +17,10 @@ pub struct SendArgs {
     /// Sticker file_id (from `tgcli stickers show --pack <pack>`)
     #[arg(long, conflicts_with = "message")]
     pub sticker: Option<String>,
+
+    /// Forum topic ID (for sending to a specific topic in a forum/supergroup)
+    #[arg(long)]
+    pub topic: Option<i32>,
 }
 
 pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
@@ -24,6 +28,9 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
 
     // Handle sticker sending
     if let Some(ref sticker_id) = args.sticker {
+        if args.topic.is_some() {
+            anyhow::bail!("--topic is not supported with --sticker yet");
+        }
         // Stickers always use direct connection (no socket support yet)
         let mut app = App::new(cli).await?;
         let msg_id = app.send_sticker(args.to, sticker_id).await?;
@@ -47,8 +54,8 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         .as_ref()
         .expect("message required when no sticker");
 
-    // Try socket first (sync process may be running)
-    if crate::app::socket::is_socket_available(&store_dir) {
+    // Try socket first (sync process may be running) - but not for topic messages yet
+    if args.topic.is_none() && crate::app::socket::is_socket_available(&store_dir) {
         let resp = crate::app::socket::send_request(
             &store_dir,
             crate::app::socket::SocketRequest::SendText {
@@ -74,16 +81,27 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         }
     }
 
-    // Fallback: direct connection
+    // Direct connection (required for topic messages)
     let mut app = App::new(cli).await?;
-    let msg_id = app.send_text(args.to, message).await?;
+
+    let msg_id = if let Some(topic_id) = args.topic {
+        app.send_text_to_topic(args.to, topic_id, message).await?
+    } else {
+        app.send_text(args.to, message).await?
+    };
 
     if cli.json {
-        out::write_json(&serde_json::json!({
+        let mut json = serde_json::json!({
             "sent": true,
             "to": args.to,
             "id": msg_id,
-        }))?;
+        });
+        if let Some(topic_id) = args.topic {
+            json["topic"] = serde_json::json!(topic_id);
+        }
+        out::write_json(&json)?;
+    } else if let Some(topic_id) = args.topic {
+        println!("Sent to {} topic {}", args.to, topic_id);
     } else {
         println!("Sent to {}", args.to);
     }
