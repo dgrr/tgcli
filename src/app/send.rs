@@ -11,6 +11,7 @@ use grammers_tl_types as tl;
 use rand::Rng;
 use std::path::Path;
 use std::time::Duration;
+use tl::enums::SendMessageAction;
 
 /// Decode a file_id string back to its components.
 /// Returns (doc_id, access_hash, file_reference)
@@ -936,6 +937,36 @@ impl App {
             msg_id, chat_id
         ))?;
 
+        Ok(())
+    }
+
+    /// Send typing indicator to a chat.
+    pub async fn set_typing(&self, chat_id: i64) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        self.tg
+            .client
+            .action(peer_ref)
+            .oneshot(SendMessageAction::SendMessageTypingAction)
+            .await
+            .context(format!(
+                "Failed to set typing indicator in chat {}",
+                chat_id
+            ))?;
+        Ok(())
+    }
+
+    /// Cancel typing indicator in a chat.
+    pub async fn cancel_typing(&self, chat_id: i64) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        self.tg
+            .client
+            .action(peer_ref)
+            .cancel()
+            .await
+            .context(format!(
+                "Failed to cancel typing indicator in chat {}",
+                chat_id
+            ))?;
         Ok(())
     }
 }

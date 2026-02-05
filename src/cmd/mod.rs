@@ -9,6 +9,7 @@ pub mod send;
 pub mod stickers;
 pub mod sync;
 pub mod topics;
+pub mod typing;
 pub mod users;
 pub mod version;
 
@@ -65,6 +66,8 @@ pub enum Command {
         #[command(subcommand)]
         cmd: users::UsersCommand,
     },
+    /// Send typing indicator
+    Typing(typing::TypingArgs),
     /// Show version info
     Version,
 }
@@ -83,6 +86,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Topics { cmd } => topics::run(&cli, cmd).await,
         Command::Folders { cmd } => folders::run(&cli, cmd).await,
         Command::Users { cmd } => users::run(&cli, cmd).await,
+        Command::Typing(args) => typing::run(&cli, args).await,
         Command::Version => {
             version::run(&cli);
             Ok(())
