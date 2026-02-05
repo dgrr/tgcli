@@ -923,6 +923,68 @@ impl Store {
         }
     }
 
+    // --- Count methods (for clear command) ---
+
+    pub async fn count_messages(&self) -> Result<u64> {
+        let mut rows = self.conn.query("SELECT COUNT(*) FROM messages", ()).await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<i64>(0)? as u64)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn count_chats(&self) -> Result<u64> {
+        let mut rows = self.conn.query("SELECT COUNT(*) FROM chats", ()).await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<i64>(0)? as u64)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn count_topics(&self) -> Result<u64> {
+        let mut rows = self.conn.query("SELECT COUNT(*) FROM topics", ()).await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<i64>(0)? as u64)
+        } else {
+            Ok(0)
+        }
+    }
+
+    pub async fn count_contacts(&self) -> Result<u64> {
+        let mut rows = self.conn.query("SELECT COUNT(*) FROM contacts", ()).await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<i64>(0)? as u64)
+        } else {
+            Ok(0)
+        }
+    }
+
+    // --- Clear methods (for clear command) ---
+
+    pub async fn clear_messages(&self) -> Result<u64> {
+        // Also clear FTS table if it exists
+        let _ = self.conn.execute("DELETE FROM messages_fts", ()).await;
+        let affected = self.conn.execute("DELETE FROM messages", ()).await?;
+        Ok(affected)
+    }
+
+    pub async fn clear_chats(&self) -> Result<u64> {
+        let affected = self.conn.execute("DELETE FROM chats", ()).await?;
+        Ok(affected)
+    }
+
+    pub async fn clear_topics(&self) -> Result<u64> {
+        let affected = self.conn.execute("DELETE FROM topics", ()).await?;
+        Ok(affected)
+    }
+
+    pub async fn clear_contacts(&self) -> Result<u64> {
+        let affected = self.conn.execute("DELETE FROM contacts", ()).await?;
+        Ok(affected)
+    }
+
     /// Get the oldest message ID for a chat (lowest message ID).
     /// Returns None if no messages exist for the chat.
     pub async fn get_oldest_message_id(
