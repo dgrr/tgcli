@@ -7,28 +7,70 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
+      - uses: dtolnay/rust-toolchain@stable
       - name: Check formatting
         run: cargo fmt --check
-
       - name: Clippy
         run: cargo clippy -- -D warnings
-
-      - name: Build
-        run: cargo build --release
-
       - name: Run tests
         run: cargo test
 
+  build:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: tgcli-linux-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: tgcli-darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: tgcli-linux-x86_64
-          path: target/release/tgcli
+          name: ${{ matrix.artifact }}
+          path: target/${{ matrix.target }}/release/tgcli
+
+  nightly:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/tgcli-linux-x86_64/tgcli release/tgcli-linux-x86_64
+          cp artifacts/tgcli-darwin-arm64/tgcli release/tgcli-darwin-arm64
+          chmod +x release/*
+      - name: Update nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          prerelease: true
+          files: release/*
+          body: |
+            Automated nightly build from main branch.
+            
+            **Commit:** ${{ github.sha }}
+            **Date:** ${{ github.event.head_commit.timestamp }}
+            
+            ⚠️ This is an unstable development build. Use at your own risk.
