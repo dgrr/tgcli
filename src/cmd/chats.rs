@@ -64,6 +64,24 @@ pub enum ChatsCommand {
         #[arg(long)]
         id: i64,
     },
+    /// Pin a chat
+    Pin {
+        /// Chat ID to pin
+        #[arg(long)]
+        id: i64,
+        /// Folder ID (0 = main chat list, 1 = archive, etc.)
+        #[arg(long, default_value = "0")]
+        folder: i32,
+    },
+    /// Unpin a chat
+    Unpin {
+        /// Chat ID to unpin
+        #[arg(long)]
+        id: i64,
+        /// Folder ID (0 = main chat list, 1 = archive, etc.)
+        #[arg(long, default_value = "0")]
+        folder: i32,
+    },
 }
 
 #[derive(Serialize)]
@@ -329,6 +347,12 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
         ChatsCommand::Unarchive { id } => {
             archive_chat(cli, *id, false).await?;
         }
+        ChatsCommand::Pin { id, folder } => {
+            pin_chat(cli, *id, true, *folder).await?;
+        }
+        ChatsCommand::Unpin { id, folder } => {
+            pin_chat(cli, *id, false, *folder).await?;
+        }
     }
     Ok(())
 }
@@ -533,6 +557,57 @@ async fn archive_chat(cli: &Cli, chat_id: i64, archive: bool) -> Result<()> {
             .map(|c| c.name)
             .unwrap_or_else(|| format!("Chat {}", chat_id));
         println!("{} \"{}\" ({})", action, chat_name, chat_id);
+    }
+
+    Ok(())
+}
+
+/// Pin or unpin a chat
+async fn pin_chat(cli: &Cli, chat_id: i64, pin: bool, folder_id: i32) -> Result<()> {
+    let app = App::new(cli).await?;
+
+    // Resolve chat to InputPeer
+    let input_peer = resolve_chat_to_input_peer(&app, chat_id).await?;
+
+    // Create InputDialogPeer with folder support
+    let input_dialog_peer = if folder_id != 0 {
+        tl::enums::InputDialogPeer::Folder(tl::types::InputDialogPeerFolder { folder_id })
+    } else {
+        tl::enums::InputDialogPeer::Peer(tl::types::InputDialogPeer { peer: input_peer })
+    };
+
+    let request = tl::functions::messages::ToggleDialogPin {
+        pinned: pin,
+        peer: input_dialog_peer,
+    };
+
+    app.tg.client.invoke(&request).await?;
+
+    let action = if pin { "Pinned" } else { "Unpinned" };
+
+    if cli.json {
+        out::write_json(&serde_json::json!({
+            "success": true,
+            "chat_id": chat_id,
+            "action": action.to_lowercase(),
+            "folder_id": folder_id,
+        }))?;
+    } else {
+        // Get chat name for display
+        let chat_name = app
+            .store
+            .get_chat(chat_id)
+            .await?
+            .map(|c| c.name)
+            .unwrap_or_else(|| format!("Chat {}", chat_id));
+        if folder_id != 0 {
+            println!(
+                "{} \"{}\" ({}) in folder {}",
+                action, chat_name, chat_id, folder_id
+            );
+        } else {
+            println!("{} \"{}\" ({})", action, chat_name, chat_id);
+        }
     }
 
     Ok(())
