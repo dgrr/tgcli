@@ -798,6 +798,146 @@ impl App {
 
         Ok(count)
     }
+
+    /// Send a poll to a chat by ID, returns the message ID.
+    pub async fn send_poll(
+        &mut self,
+        chat_id: i64,
+        question: &str,
+        options: &[String],
+        multiple_choice: bool,
+        public_voters: bool,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        // Generate a random poll ID
+        let poll_id: i64 = rand::rng().random();
+
+        // Build poll answers with unique option identifiers
+        let answers: Vec<tl::enums::PollAnswer> = options
+            .iter()
+            .enumerate()
+            .map(|(i, text)| {
+                tl::enums::PollAnswer::Answer(tl::types::PollAnswer {
+                    text: tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
+                        text: text.clone(),
+                        entities: vec![],
+                    }),
+                    option: vec![i as u8], // Use index as option identifier
+                })
+            })
+            .collect();
+
+        // Build the poll
+        let poll = tl::enums::Poll::Poll(tl::types::Poll {
+            id: poll_id,
+            closed: false,
+            public_voters,
+            multiple_choice,
+            quiz: false,
+            question: tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
+                text: question.to_string(),
+                entities: vec![],
+            }),
+            answers,
+            close_period: None,
+            close_date: None,
+        });
+
+        // Create InputMediaPoll
+        let input_media = tl::enums::InputMedia::Poll(tl::types::InputMediaPoll {
+            poll,
+            correct_answers: None,
+            solution: None,
+            solution_entities: None,
+        });
+
+        let random_id: i64 = rand::rng().random();
+
+        let request = tl::functions::messages::SendMedia {
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: None,
+            media: input_media,
+            message: String::new(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to send poll to chat {}", chat_id))?;
+
+        let msg_id = Self::extract_message_id_from_updates(&updates)?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg_id,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: question.to_string(),
+                media_type: Some("poll".to_string()),
+                media_path: None,
+                reply_to_id: None,
+                topic_id: None,
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg_id)
+    }
+
+    /// Vote in a poll.
+    pub async fn vote_poll(
+        &self,
+        chat_id: i64,
+        msg_id: i64,
+        option_indices: &[usize],
+    ) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        // Convert option indices to option bytes (each option is identified by its index as a single byte)
+        let options: Vec<Vec<u8>> = option_indices.iter().map(|&i| vec![i as u8]).collect();
+
+        let request = tl::functions::messages::SendVote {
+            peer: input_peer,
+            msg_id: msg_id as i32,
+            options,
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to vote in poll (message {} in chat {})",
+            msg_id, chat_id
+        ))?;
+
+        Ok(())
+    }
 }
 
 /// Extract topic_id from a raw TL message

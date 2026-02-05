@@ -3,6 +3,7 @@ pub mod chats;
 pub mod contacts;
 pub mod folders;
 pub mod messages;
+pub mod polls;
 pub mod read;
 pub mod send;
 pub mod stickers;
@@ -43,6 +44,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: stickers::StickersCommand,
     },
+    /// Create and vote in polls
+    Polls {
+        #[command(subcommand)]
+        cmd: polls::PollsCommand,
+    },
     /// List and show forum topics
     Topics {
         #[command(subcommand)]
@@ -67,6 +73,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Contacts { cmd } => contacts::run(&cli, cmd).await,
         Command::Read(args) => read::run(&cli, args).await,
         Command::Stickers { cmd } => stickers::run(&cli, cmd).await,
+        Command::Polls { cmd } => polls::run(&cli, cmd).await,
         Command::Topics { cmd } => topics::run(&cli, cmd).await,
         Command::Folders { cmd } => folders::run(&cli, cmd).await,
         Command::Version => {
