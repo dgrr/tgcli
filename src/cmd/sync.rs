@@ -10,10 +10,6 @@ pub struct SyncArgs {
     #[arg(long, default_value_t = false)]
     pub once: bool,
 
-    /// Keep syncing (daemon mode) - DEPRECATED, use cron with --once instead
-    #[arg(long, default_value_t = false)]
-    pub follow: bool,
-
     /// Incremental sync: only fetch messages newer than last sync (default: true)
     #[arg(long, default_value_t = true)]
     pub incremental: bool,
@@ -66,17 +62,7 @@ pub struct SyncArgs {
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
     let mut app = App::new(cli).await?;
 
-    let mode = if args.follow {
-        eprintln!(
-            "Warning: --follow is deprecated. Use cron with --once instead for incremental sync."
-        );
-        crate::app::sync::SyncMode::Follow
-    } else if args.once {
-        crate::app::sync::SyncMode::Once
-    } else {
-        // Default to once
-        crate::app::sync::SyncMode::Once
-    };
+    let mode = crate::app::sync::SyncMode::Once;
 
     let output_mode = if args.stream {
         crate::app::sync::OutputMode::Stream
