@@ -988,7 +988,7 @@ impl App {
 
             let chats_map: std::collections::HashMap<i64, tl::enums::Chat> = chats
                 .into_iter()
-                .filter_map(|c| {
+                .map(|c| {
                     let id = match &c {
                         tl::enums::Chat::Empty(ch) => ch.id,
                         tl::enums::Chat::Chat(ch) => ch.id,
@@ -996,7 +996,7 @@ impl App {
                         tl::enums::Chat::Channel(ch) => ch.id,
                         tl::enums::Chat::ChannelForbidden(ch) => ch.id,
                     };
-                    Some((id, c))
+                    (id, c)
                 })
                 .collect();
 
