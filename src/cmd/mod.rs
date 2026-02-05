@@ -9,6 +9,7 @@ pub mod send;
 pub mod stickers;
 pub mod sync;
 pub mod topics;
+pub mod users;
 pub mod version;
 
 use crate::Cli;
@@ -59,6 +60,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: folders::FoldersCommand,
     },
+    /// Show user info, block and unblock users
+    Users {
+        #[command(subcommand)]
+        cmd: users::UsersCommand,
+    },
     /// Show version info
     Version,
 }
@@ -76,6 +82,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Polls { cmd } => polls::run(&cli, cmd).await,
         Command::Topics { cmd } => topics::run(&cli, cmd).await,
         Command::Folders { cmd } => folders::run(&cli, cmd).await,
+        Command::Users { cmd } => users::run(&cli, cmd).await,
         Command::Version => {
             version::run(&cli);
             Ok(())
