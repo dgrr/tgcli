@@ -1,6 +1,6 @@
 # tgcli - Telegram CLI (Rust)
 
-Pure Rust Telegram CLI using grammers (MTProto). No TDLib, no C/C++ dependencies.
+Pure Rust Telegram CLI using grammers (MTProto) and turso (libSQL). No C/C++ dependencies.
 
 ## Installation
 
@@ -18,15 +18,15 @@ cargo build --release
 tgcli auth  # Interactive: phone → code → 2FA
 ```
 
-Requires Telegram API credentials (api_id, api_hash) from https://my.telegram.org
-
 ## Core Commands
 
 ### Sync
 ```bash
-tgcli sync --once              # One-time sync
-tgcli sync --follow            # Continuous sync daemon
-tgcli sync --follow --socket   # With IPC socket for concurrent sends
+tgcli sync --once                    # One-time sync
+tgcli sync --follow                  # Continuous sync daemon
+tgcli sync --follow --socket         # With IPC socket for concurrent sends
+tgcli sync --ignore 123456           # Exclude specific chat(s)
+tgcli sync --ignore-channels         # Exclude all channels
 ```
 
 ### Chats
@@ -40,11 +40,14 @@ tgcli chats show --id <chat_id>     # Show chat details
 ### Messages
 ```bash
 tgcli messages list --chat <id>              # List messages in chat
-tgcli messages list --chat <id> --limit 100  # With limit
+tgcli messages list --limit 100              # List recent messages
+tgcli messages list --ignore 123 --ignore-channels  # Filter chats
 tgcli messages search "keyword"              # Full-text search (FTS5)
 tgcli messages search "keyword" --chat <id>  # Search in specific chat
 tgcli messages show --chat <id> --id <msg>   # Show single message
 tgcli messages context --chat <id> --id <msg> --before 5 --after 5  # Context
+tgcli messages delete --chat <id> --id <msg> # Delete message (for everyone)
+tgcli messages delete --chat <id> --id 1 --id 2 --id 3  # Delete multiple
 ```
 
 ### Send
@@ -84,7 +87,7 @@ tgcli --store ~/.tgcli-work chats list
 ## Storage Paths
 
 - Session: `~/.tgcli/session.db`
-- Database: `~/.tgcli/tgcli.db` (SQLite + FTS5)
+- Database: `~/.tgcli/tgcli.db` (SQLite/libSQL + FTS5)
 - Socket: `~/.tgcli/tgcli.sock`
 
 ## Socket IPC
@@ -104,22 +107,19 @@ When sync daemon runs with `--socket`, send commands via Unix socket:
 tgcli auth
 tgcli sync --once
 
-# Daily use with daemon
-tgcli sync --follow --socket &
+# Daily use with daemon (excluding noisy channels)
+tgcli sync --follow --socket --ignore-channels &
 tgcli chats list
 tgcli messages search "meeting"
 tgcli send --to 123456 -m "On my way"
+
+# Delete a message
+tgcli messages delete --chat 123456 --id 789
 
 # Export chat history
 tgcli messages list --chat 123456 --json > messages.json
 ```
 
-## vs tgcli-go
+## See Also
 
-| | tgcli | tgcli-go |
-|---|-------|------|
-| Language | Rust | Go |
-| Backend | grammers (pure Rust) | TDLib (C++) |
-| Dependencies | None | Requires TDLib |
-| Features | Core features | More complete |
-| Binary size | Larger | Smaller |
+- **[tgcli-go](https://github.com/dgrr/tgcli-go)** - Legacy Go/TDLib version (requires building TDLib)
