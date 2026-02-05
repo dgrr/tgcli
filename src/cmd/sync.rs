@@ -10,9 +10,17 @@ pub struct SyncArgs {
     #[arg(long, default_value_t = false)]
     pub once: bool,
 
-    /// Keep syncing (daemon mode)
+    /// Keep syncing (daemon mode) - DEPRECATED, use cron with --once instead
     #[arg(long, default_value_t = false)]
     pub follow: bool,
+
+    /// Incremental sync: only fetch messages newer than last sync (default: true)
+    #[arg(long, default_value_t = true)]
+    pub incremental: bool,
+
+    /// Full sync: fetch all messages regardless of last sync state
+    #[arg(long, default_value_t = false)]
+    pub full: bool,
 
     /// Download media files
     #[arg(long, default_value_t = false)]
@@ -45,12 +53,19 @@ pub struct SyncArgs {
     /// Suppress progress output
     #[arg(long, default_value_t = false)]
     pub no_progress: bool,
+
+    /// Maximum messages per chat during full sync (default: 50)
+    #[arg(long, default_value = "50")]
+    pub messages_per_chat: usize,
 }
 
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
     let mut app = App::new(cli).await?;
 
     let mode = if args.follow {
+        eprintln!(
+            "Warning: --follow is deprecated. Use cron with --once instead for incremental sync."
+        );
         crate::app::sync::SyncMode::Follow
     } else if args.once {
         crate::app::sync::SyncMode::Once
@@ -65,6 +80,9 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         _ => crate::app::sync::OutputMode::None,
     };
 
+    // --full overrides --incremental
+    let incremental = args.incremental && !args.full;
+
     let opts = crate::app::sync::SyncOptions {
         mode,
         output: output_mode,
@@ -75,6 +93,8 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         ignore_chat_ids: args.ignore_chat_ids.clone(),
         ignore_channels: args.ignore_channels,
         show_progress: !args.no_progress,
+        incremental,
+        messages_per_chat: args.messages_per_chat,
     };
 
     let result = app.sync(opts).await?;
@@ -84,11 +104,13 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             "synced": true,
             "messages_stored": result.messages_stored,
             "chats_stored": result.chats_stored,
+            "incremental": incremental,
         }))?;
     } else {
+        let mode_str = if incremental { "incremental" } else { "full" };
         eprintln!(
-            "Sync complete. Messages: {}, Chats: {}",
-            result.messages_stored, result.chats_stored
+            "Sync complete ({}). Messages: {}, Chats: {}",
+            mode_str, result.messages_stored, result.chats_stored
         );
     }
 

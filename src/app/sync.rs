@@ -10,8 +10,8 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
-/// Maximum messages to fetch per chat during initial sync.
-const MESSAGES_PER_CHAT: usize = 50;
+/// Maximum messages to fetch per chat during incremental sync (effectively unlimited).
+const INCREMENTAL_MAX_MESSAGES: usize = 10000;
 
 #[derive(Debug, Clone, Copy)]
 pub enum SyncMode {
@@ -36,6 +36,8 @@ pub struct SyncOptions {
     pub ignore_chat_ids: Vec<i64>,
     pub ignore_channels: bool,
     pub show_progress: bool,
+    pub incremental: bool,
+    pub messages_per_chat: usize,
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -253,21 +255,56 @@ impl App {
                     .await?;
             }
 
-            // Fetch recent messages for this chat
+            // Fetch messages for this chat
             let peer_ref = PeerRef::from(peer);
             let mut message_iter = client.iter_messages(peer_ref);
             let mut count = 0;
             let mut latest_ts: Option<DateTime<Utc>> = None;
+            let mut highest_msg_id: Option<i64> = None;
+
+            // For incremental sync, get the last synced message ID
+            let last_sync_id = if opts.incremental {
+                self.store.get_last_sync_message_id(id).await.ok().flatten()
+            } else {
+                None
+            };
+
+            // Determine max messages to fetch
+            let max_messages = if opts.incremental && last_sync_id.is_some() {
+                INCREMENTAL_MAX_MESSAGES
+            } else {
+                opts.messages_per_chat
+            };
 
             while let Some(msg) = message_iter
                 .next()
                 .await
                 .with_context(|| format!("Failed to fetch messages for chat {} ({})", name, id))?
             {
-                if count >= MESSAGES_PER_CHAT {
+                let msg_id = msg.id() as i64;
+
+                // For incremental sync, stop when we hit a message we've already seen
+                if let Some(last_id) = last_sync_id {
+                    if msg_id <= last_id {
+                        log::debug!(
+                            "Chat {}: reached last synced message {} (stopping at {})",
+                            id,
+                            last_id,
+                            msg_id
+                        );
+                        break;
+                    }
+                }
+
+                if count >= max_messages {
                     break;
                 }
                 count += 1;
+
+                // Track the highest message ID we've seen
+                if highest_msg_id.is_none() || msg_id > highest_msg_id.unwrap() {
+                    highest_msg_id = Some(msg_id);
+                }
 
                 let msg_ts = msg.date();
                 if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
@@ -369,6 +406,11 @@ impl App {
                     .await?;
             }
 
+            // Update last_sync_message_id for incremental sync
+            if let Some(high_id) = highest_msg_id {
+                self.store.update_last_sync_message_id(id, high_id).await?;
+            }
+
             // If it's a forum, sync topics
             if is_forum {
                 if let Ok(topic_count) = self.sync_topics(id).await {
@@ -413,11 +455,26 @@ impl App {
                     .await?;
             }
 
-            // Fetch recent messages for this chat
+            // Fetch messages for this chat
             let peer_ref = PeerRef::from(&peer);
             let mut message_iter = client.iter_messages(peer_ref);
             let mut count = 0;
             let mut latest_ts: Option<DateTime<Utc>> = None;
+            let mut highest_msg_id: Option<i64> = None;
+
+            // For incremental sync, get the last synced message ID
+            let last_sync_id = if opts.incremental {
+                self.store.get_last_sync_message_id(id).await.ok().flatten()
+            } else {
+                None
+            };
+
+            // Determine max messages to fetch
+            let max_messages = if opts.incremental && last_sync_id.is_some() {
+                INCREMENTAL_MAX_MESSAGES
+            } else {
+                opts.messages_per_chat
+            };
 
             while let Some(msg) = message_iter.next().await.with_context(|| {
                 format!(
@@ -425,10 +482,30 @@ impl App {
                     name, id
                 )
             })? {
-                if count >= MESSAGES_PER_CHAT {
+                let msg_id = msg.id() as i64;
+
+                // For incremental sync, stop when we hit a message we've already seen
+                if let Some(last_id) = last_sync_id {
+                    if msg_id <= last_id {
+                        log::debug!(
+                            "Archived chat {}: reached last synced message {} (stopping at {})",
+                            id,
+                            last_id,
+                            msg_id
+                        );
+                        break;
+                    }
+                }
+
+                if count >= max_messages {
                     break;
                 }
                 count += 1;
+
+                // Track the highest message ID we've seen
+                if highest_msg_id.is_none() || msg_id > highest_msg_id.unwrap() {
+                    highest_msg_id = Some(msg_id);
+                }
 
                 let msg_ts = msg.date();
                 if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
@@ -485,6 +562,11 @@ impl App {
                 self.store
                     .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts), is_forum)
                     .await?;
+            }
+
+            // Update last_sync_message_id for incremental sync
+            if let Some(high_id) = highest_msg_id {
+                self.store.update_last_sync_message_id(id, high_id).await?;
             }
 
             // If it's a forum, sync topics

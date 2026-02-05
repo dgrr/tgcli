@@ -20,6 +20,8 @@ pub struct Chat {
     pub last_message_ts: Option<DateTime<Utc>>,
     #[serde(default)]
     pub is_forum: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_sync_message_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,7 +128,8 @@ impl Store {
                     name TEXT NOT NULL DEFAULT '',
                     username TEXT,
                     last_message_ts TEXT,
-                    is_forum INTEGER DEFAULT 0
+                    is_forum INTEGER DEFAULT 0,
+                    last_sync_message_id INTEGER
                 )",
                 (),
             )
@@ -209,6 +212,15 @@ impl Store {
         let _ = self
             .conn
             .execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER", ())
+            .await;
+
+        // Add last_sync_message_id column if it doesn't exist (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE chats ADD COLUMN last_sync_message_id INTEGER",
+                (),
+            )
             .await;
 
         self.conn
@@ -375,7 +387,7 @@ impl Store {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, kind, name, username, last_message_ts, is_forum FROM chats
+                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id FROM chats
                      WHERE name LIKE ?1 OR username LIKE ?1
                      ORDER BY last_message_ts DESC LIMIT ?2",
                     (pattern.as_str(), limit),
@@ -388,7 +400,7 @@ impl Store {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, kind, name, username, last_message_ts, is_forum FROM chats
+                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id FROM chats
                      ORDER BY last_message_ts DESC LIMIT ?1",
                     [limit],
                 )
@@ -404,7 +416,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, kind, name, username, last_message_ts, is_forum FROM chats WHERE id = ?1",
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id FROM chats WHERE id = ?1",
                 [id],
             )
             .await?;
@@ -422,6 +434,50 @@ impl Store {
             .execute("DELETE FROM chats WHERE id = ?1", [id])
             .await?;
         Ok(affected > 0)
+    }
+
+    /// Get the last sync message ID for a chat.
+    /// This is the highest message ID we've synced for incremental sync.
+    pub async fn get_last_sync_message_id(&self, chat_id: i64) -> Result<Option<i64>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT last_sync_message_id FROM chats WHERE id = ?1",
+                [chat_id],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<Option<i64>>(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Update the last sync message ID for a chat.
+    /// Only updates if new_id is higher than the current value.
+    pub async fn update_last_sync_message_id(&self, chat_id: i64, new_id: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE chats SET last_sync_message_id = ?2 
+                 WHERE id = ?1 AND (last_sync_message_id IS NULL OR last_sync_message_id < ?2)",
+                (chat_id, new_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Get the highest message ID we have stored for a chat.
+    #[allow(dead_code)]
+    pub async fn get_highest_message_id(&self, chat_id: i64) -> Result<Option<i64>> {
+        let mut rows = self
+            .conn
+            .query("SELECT MAX(id) FROM messages WHERE chat_id = ?1", [chat_id])
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<Option<i64>>(0)?)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Delete all messages for a chat from local database. Returns count of deleted messages.
@@ -1035,6 +1091,7 @@ fn row_to_chat(row: &Row) -> Result<Chat> {
         username: row.get::<Option<String>>(3)?,
         last_message_ts: row.get::<Option<String>>(4)?.map(|s| parse_ts(&s)),
         is_forum: row.get::<i64>(5).unwrap_or(0) != 0,
+        last_sync_message_id: row.get::<Option<i64>>(6).ok().flatten(),
     })
 }
 
