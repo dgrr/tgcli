@@ -5,7 +5,7 @@ pub mod sync;
 use crate::store::Store;
 use crate::tg::TgClient;
 use crate::Cli;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use grammers_session::defs::PeerRef;
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types as tl;
@@ -23,18 +23,27 @@ pub struct App {
 impl App {
     pub async fn new(cli: &Cli) -> Result<Self> {
         let store_dir = cli.store_dir();
-        std::fs::create_dir_all(&store_dir)?;
+        std::fs::create_dir_all(&store_dir)
+            .with_context(|| format!("Failed to create store directory '{}'", store_dir))?;
 
         let session_path = format!("{}/session.db", store_dir);
         // SqliteSession::open creates the file if it doesn't exist
 
-        let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)?;
+        let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)
+            .context("Failed to connect to Telegram")?;
 
-        if !tg.client.is_authorized().await? {
+        if !tg
+            .client
+            .is_authorized()
+            .await
+            .context("Failed to check authorization status")?
+        {
             anyhow::bail!("Session expired or not authenticated. Run `tgcli auth` first.");
         }
 
-        let store = Store::open(&store_dir).await?;
+        let store = Store::open(&store_dir)
+            .await
+            .context("Failed to open message store database")?;
 
         Ok(App {
             tg,
@@ -48,12 +57,16 @@ impl App {
     /// Create App without requiring authorization (for auth command).
     pub async fn new_unauthed(cli: &Cli) -> Result<Self> {
         let store_dir = cli.store_dir();
-        std::fs::create_dir_all(&store_dir)?;
+        std::fs::create_dir_all(&store_dir)
+            .with_context(|| format!("Failed to create store directory '{}'", store_dir))?;
 
         let session_path = format!("{}/session.db", store_dir);
 
-        let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)?;
-        let store = Store::open(&store_dir).await?;
+        let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)
+            .context("Failed to connect to Telegram")?;
+        let store = Store::open(&store_dir)
+            .await
+            .context("Failed to open message store database")?;
 
         Ok(App {
             tg,
@@ -83,7 +96,12 @@ impl App {
             limit: 100,
         };
 
-        let result = self.tg.client.invoke(&request).await?;
+        let result = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .with_context(|| format!("Failed to fetch forum topics for chat {}", chat_id))?;
 
         let topics = match result {
             tl::enums::messages::ForumTopics::Topics(t) => t.topics,
@@ -119,7 +137,9 @@ impl App {
     /// Resolve a chat ID to a PeerRef for topics API.
     async fn resolve_peer_ref_for_topics(&self, chat_id: i64) -> Result<PeerRef> {
         let mut dialogs = self.tg.client.iter_dialogs();
-        while let Some(dialog) = dialogs.next().await? {
+        while let Some(dialog) = dialogs.next().await.with_context(|| {
+            format!("Failed to iterate dialogs while resolving chat {}", chat_id)
+        })? {
             let peer = dialog.peer();
             if peer.id().bare_id() == chat_id {
                 return Ok(PeerRef::from(peer));

@@ -282,11 +282,20 @@ impl Store {
         // Compare row counts: if messages exist but FTS is empty/underpopulated, rebuild
         let msg_count: i64 = {
             let mut rows = self.conn.query("SELECT COUNT(*) FROM messages", ()).await?;
-            rows.next().await?.map(|r| r.get(0).unwrap_or(0)).unwrap_or(0)
+            rows.next()
+                .await?
+                .map(|r| r.get(0).unwrap_or(0))
+                .unwrap_or(0)
         };
         let fts_count: i64 = {
-            let mut rows = self.conn.query("SELECT COUNT(*) FROM messages_fts", ()).await?;
-            rows.next().await?.map(|r| r.get(0).unwrap_or(0)).unwrap_or(0)
+            let mut rows = self
+                .conn
+                .query("SELECT COUNT(*) FROM messages_fts", ())
+                .await?;
+            rows.next()
+                .await?
+                .map(|r| r.get(0).unwrap_or(0))
+                .unwrap_or(0)
         };
 
         if msg_count > 0 && fts_count < msg_count {
@@ -296,10 +305,7 @@ impl Store {
                 msg_count
             );
             // Rebuild the entire FTS index from scratch
-            let _ = self
-                .conn
-                .execute("DELETE FROM messages_fts", ())
-                .await;
+            let _ = self.conn.execute("DELETE FROM messages_fts", ()).await;
             let rebuild_result = self
                 .conn
                 .execute(
@@ -858,7 +864,12 @@ impl Store {
     }
 
     /// Update a message's text (for edits)
-    pub async fn update_message_text(&self, chat_id: i64, msg_id: i64, new_text: &str) -> Result<()> {
+    pub async fn update_message_text(
+        &self,
+        chat_id: i64,
+        msg_id: i64,
+        new_text: &str,
+    ) -> Result<()> {
         let edit_ts = Utc::now().to_rfc3339();
         self.conn
             .execute(

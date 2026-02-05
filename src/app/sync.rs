@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::store::UpsertMessageParams;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use grammers_client::types::{Media, Message as TgMessage, Peer, Update};
 use grammers_client::UpdatesConfiguration;
@@ -280,7 +280,11 @@ impl App {
         // Phase 1: Bootstrap — fetch recent dialogs and their messages
         eprintln!("Bootstrapping: fetching dialogs…");
         let mut dialogs = client.iter_dialogs();
-        while let Some(dialog) = dialogs.next().await? {
+        while let Some(dialog) = dialogs
+            .next()
+            .await
+            .context("Failed to fetch dialogs from Telegram")?
+        {
             let peer = dialog.peer();
             let (kind, name, username, is_forum) = peer_info(peer);
             let id = peer.id().bare_id();
@@ -314,7 +318,11 @@ impl App {
             let mut count = 0;
             let mut latest_ts: Option<DateTime<Utc>> = None;
 
-            while let Some(msg) = message_iter.next().await? {
+            while let Some(msg) = message_iter
+                .next()
+                .await
+                .with_context(|| format!("Failed to fetch messages for chat {} ({})", name, id))?
+            {
                 if count >= 100 {
                     break;
                 }

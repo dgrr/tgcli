@@ -3,7 +3,13 @@ use crate::out;
 use crate::store::{self, Store};
 use crate::Cli;
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ExportFormat {
+    Json,
+    Csv,
+}
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum MessagesCommand {
@@ -30,12 +36,18 @@ pub enum MessagesCommand {
         /// Limit results
         #[arg(long, default_value = "50")]
         limit: i64,
-        /// Only messages after this time (RFC3339 or YYYY-MM-DD)
+        /// Only messages after this time (RFC3339, YYYY-MM-DD, 'today', or 'yesterday')
         #[arg(long)]
         after: Option<String>,
-        /// Only messages before this time (RFC3339 or YYYY-MM-DD)
+        /// Only messages before this time (RFC3339, YYYY-MM-DD, 'today', or 'yesterday')
         #[arg(long)]
         before: Option<String>,
+        /// Only messages from today
+        #[arg(long)]
+        today: bool,
+        /// Only messages from yesterday
+        #[arg(long)]
+        yesterday: bool,
         /// Chat IDs to exclude (repeatable)
         #[arg(long = "ignore", value_name = "CHAT_ID")]
         ignore_chats: Vec<i64>,
@@ -59,12 +71,48 @@ pub enum MessagesCommand {
         /// Media type filter
         #[arg(long, name = "type")]
         media_type: Option<String>,
+        /// Only messages after this time (RFC3339, YYYY-MM-DD, 'today', or 'yesterday')
+        #[arg(long)]
+        after: Option<String>,
+        /// Only messages before this time (RFC3339, YYYY-MM-DD, 'today', or 'yesterday')
+        #[arg(long)]
+        before: Option<String>,
+        /// Only messages from today
+        #[arg(long)]
+        today: bool,
+        /// Only messages from yesterday
+        #[arg(long)]
+        yesterday: bool,
         /// Chat IDs to exclude (repeatable)
         #[arg(long = "ignore", value_name = "CHAT_ID")]
         ignore_chats: Vec<i64>,
         /// Exclude channels
         #[arg(long)]
         ignore_channels: bool,
+    },
+    /// Export messages to stdout (JSON or CSV)
+    Export {
+        /// Chat ID (required)
+        #[arg(long)]
+        chat: i64,
+        /// Output format
+        #[arg(long, value_enum, default_value = "json")]
+        format: ExportFormat,
+        /// Maximum messages to export (default: all)
+        #[arg(long)]
+        limit: Option<i64>,
+        /// Only messages after this time
+        #[arg(long)]
+        after: Option<String>,
+        /// Only messages before this time
+        #[arg(long)]
+        before: Option<String>,
+        /// Only messages from today
+        #[arg(long)]
+        today: bool,
+        /// Only messages from yesterday
+        #[arg(long)]
+        yesterday: bool,
     },
     /// Show message context around a message
     Context {
@@ -199,6 +247,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             before,
             ignore_chats,
             ignore_channels,
+            ..
         } => {
             let after_ts = after.as_deref().map(parse_time).transpose()?;
             let before_ts = before.as_deref().map(parse_time).transpose()?;
@@ -256,6 +305,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             media_type,
             ignore_chats,
             ignore_channels,
+            ..
         } => {
             let msgs = store
                 .search_messages(store::SearchMessagesParams {
@@ -454,7 +504,11 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 println!("Pinned message {} in chat {}", id, chat);
             }
         }
-        MessagesCommand::Unpin { chat, id, pm_oneside } => {
+        MessagesCommand::Unpin {
+            chat,
+            id,
+            pm_oneside,
+        } => {
             // Unpin requires network access
             let app = App::new(cli).await?;
 
@@ -469,6 +523,9 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             } else {
                 println!("Unpinned message {} in chat {}", id, chat);
             }
+        }
+        MessagesCommand::Export { .. } => {
+            anyhow::bail!("Export command is not yet implemented");
         }
     }
     Ok(())

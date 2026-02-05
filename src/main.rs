@@ -1,5 +1,6 @@
 mod app;
 mod cmd;
+mod error;
 mod out;
 mod store;
 mod tg;

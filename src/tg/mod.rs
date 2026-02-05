@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use grammers_client::Client;
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
@@ -23,10 +23,12 @@ impl TgClient {
     pub fn connect_with_updates(
         session_path: &str,
     ) -> Result<(Self, mpsc::UnboundedReceiver<UpdatesLike>)> {
-        let session = Arc::new(
-            SqliteSession::open(session_path)
-                .map_err(|e| anyhow::anyhow!("Failed to open session: {}", e))?,
-        );
+        let session = Arc::new(SqliteSession::open(session_path).with_context(|| {
+            format!(
+                "Failed to open session database at '{}'. Check file permissions.",
+                session_path
+            )
+        })?);
 
         let pool = SenderPool::new(Arc::clone(&session) as Arc<SqliteSession>, API_ID);
         let client = Client::new(&pool);

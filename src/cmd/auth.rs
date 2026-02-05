@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::out;
 use crate::tg;
 use crate::Cli;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 use std::io::{self, Write};
 
@@ -46,7 +46,10 @@ async fn interactive_auth(cli: &Cli) -> Result<()> {
     }
 
     // Request login code
-    let token = client.request_login_code(&phone, tg::API_HASH).await?;
+    let token = client
+        .request_login_code(&phone, tg::API_HASH)
+        .await
+        .with_context(|| format!("Failed to request login code for {}", phone))?;
     eprintln!("Login code sent via Telegram.");
 
     eprint!("Enter the code: ");
@@ -81,7 +84,8 @@ async fn interactive_auth(cli: &Cli) -> Result<()> {
             let password = rpassword::prompt_password("Enter 2FA password: ")?;
             let user = client
                 .check_password(password_token, password.as_bytes().to_vec())
-                .await?;
+                .await
+                .context("Failed to verify 2FA password")?;
             let name = user.first_name().map(|s| s.to_string()).unwrap_or_default();
             if cli.json {
                 out::write_json(&serde_json::json!({
@@ -152,7 +156,11 @@ async fn logout(cli: &Cli) -> Result<()> {
     }
 
     let app = App::new_unauthed(cli).await?;
-    app.tg.client.sign_out().await?;
+    app.tg
+        .client
+        .sign_out()
+        .await
+        .context("Failed to sign out from Telegram")?;
     // Remove session file
     let _ = std::fs::remove_file(&session_path);
 

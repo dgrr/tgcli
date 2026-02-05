@@ -1,6 +1,7 @@
 use crate::app::App;
+use crate::error::TgErrorContext;
 use crate::store::UpsertMessageParams;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use grammers_client::InputMessage;
@@ -30,7 +31,8 @@ impl App {
             .tg
             .client
             .send_message(peer_ref, InputMessage::new().text(text))
-            .await?;
+            .await
+            .context_send(chat_id)?;
 
         let now = Utc::now();
         self.store
@@ -104,7 +106,12 @@ impl App {
             suggested_post: None,
         };
 
-        let updates = self.tg.client.invoke(&request).await?;
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context_send(chat_id)?;
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
@@ -180,7 +187,12 @@ impl App {
             suggested_post: None,
         };
 
-        let updates = self.tg.client.invoke(&request).await?;
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context_send(chat_id)?;
 
         // Extract message ID from updates
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
@@ -262,7 +274,11 @@ impl App {
             id: msg_id as i32,
         };
 
-        self.tg.client.invoke(&request).await?;
+        self.tg
+            .client
+            .invoke(&request)
+            .await
+            .context_pin(chat_id, msg_id, true)?;
         Ok(())
     }
 
@@ -279,7 +295,10 @@ impl App {
             id: msg_id as i32,
         };
 
-        self.tg.client.invoke(&request).await?;
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to unpin message {} in chat {}",
+            msg_id, chat_id
+        ))?;
         Ok(())
     }
 
@@ -301,10 +320,15 @@ impl App {
             quick_reply_shortcut_id: None,
         };
 
-        self.tg.client.invoke(&request).await?;
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to edit message {} in chat {}",
+            msg_id, chat_id
+        ))?;
 
         // Update local store
-        self.store.update_message_text(chat_id, msg_id, new_text).await?;
+        self.store
+            .update_message_text(chat_id, msg_id, new_text)
+            .await?;
 
         Ok(())
     }
@@ -341,12 +365,16 @@ impl App {
             schedule_date: None,
             send_as: None,
             quick_reply_shortcut: None,
-            video_cover: None,
             video_timestamp: None,
             allow_paid_stars: None,
+            reply_to: None,
+            suggested_post: None,
         };
 
-        let updates = self.tg.client.invoke(&request).await?;
+        let updates = self.tg.client.invoke(&request).await.context(format!(
+            "Failed to forward message {} from chat {} to chat {}",
+            msg_id, from_chat_id, to_chat_id
+        ))?;
         let new_msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         Ok(new_msg_id)
@@ -355,7 +383,11 @@ impl App {
     /// Mark a chat as read.
     pub async fn mark_read(&mut self, chat_id: i64) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
-        self.tg.client.mark_as_read(peer_ref).await?;
+        self.tg
+            .client
+            .mark_as_read(peer_ref)
+            .await
+            .context(format!("Failed to mark chat {} as read", chat_id))?;
         Ok(())
     }
 
@@ -367,7 +399,16 @@ impl App {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         // grammers expects i32 message IDs
         let ids: Vec<i32> = msg_ids.iter().map(|&id| id as i32).collect();
-        let affected = self.tg.client.delete_messages(peer_ref, &ids).await?;
+        let affected = self
+            .tg
+            .client
+            .delete_messages(peer_ref, &ids)
+            .await
+            .context(format!(
+                "Failed to delete {} message(s) from chat {}",
+                msg_ids.len(),
+                chat_id
+            ))?;
         Ok(affected)
     }
 
@@ -400,7 +441,8 @@ impl App {
             .tg
             .client
             .send_message(peer_ref, InputMessage::new().text("").media(input_media))
-            .await?;
+            .await
+            .context(format!("Failed to send sticker to chat {}", chat_id))?;
 
         let now = Utc::now();
         self.store
@@ -428,23 +470,24 @@ impl App {
     }
 
     /// Send a photo to a chat by ID, returns the message ID.
-    pub async fn send_photo(
-        &mut self,
-        chat_id: i64,
-        path: &Path,
-        caption: &str,
-    ) -> Result<i64> {
+    pub async fn send_photo(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
 
         // Upload the file
-        let uploaded = self.tg.client.upload_file(path).await?;
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context(format!("Failed to upload photo '{}'", path.display()))?;
 
         // Send as photo with caption
         let msg = self
             .tg
             .client
             .send_message(peer_ref, InputMessage::new().text(caption).photo(uploaded))
-            .await?;
+            .await
+            .context(format!("Failed to send photo to chat {}", chat_id))?;
 
         let now = Utc::now();
         self.store

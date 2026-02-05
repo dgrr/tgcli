@@ -23,6 +23,10 @@ pub struct SendArgs {
     #[arg(long, conflicts_with_all = ["sticker", "video", "file", "voice"])]
     pub photo: Option<PathBuf>,
 
+    /// Send a video (path to video file)
+    #[arg(long, conflicts_with_all = ["sticker", "photo", "file", "voice"])]
+    pub video: Option<PathBuf>,
+
     /// Forum topic ID (for sending to a specific topic in a forum/supergroup)
     #[arg(long)]
     pub topic: Option<i32>,
