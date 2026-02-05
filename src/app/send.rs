@@ -122,7 +122,7 @@ impl App {
                 media_type: None,
                 media_path: None,
                 reply_to_id: None,
-                topic_id: Some(topic_id as i32),
+                topic_id: Some(topic_id),
             })
             .await?;
 

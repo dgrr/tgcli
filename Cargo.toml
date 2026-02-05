@@ -1,6 +1,6 @@
 [package]
 name = "tgcli"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Dario <me@dgrp.es>"]
 description = "Telegram CLI tool using grammers (pure Rust MTProto)"
