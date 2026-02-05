@@ -677,6 +677,47 @@ impl App {
         Ok(msg.id() as i64)
     }
 
+    /// Send or remove a reaction on a message.
+    /// If `remove` is true, removes the specified reaction. Otherwise, adds it.
+    pub async fn send_reaction(
+        &self,
+        chat_id: i64,
+        msg_id: i64,
+        emoji: &str,
+        remove: bool,
+    ) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        // Build the reaction vector
+        let reaction = if remove {
+            // Empty vector or None removes the reaction
+            None
+        } else {
+            Some(vec![tl::enums::Reaction::Emoji(tl::types::ReactionEmoji {
+                emoticon: emoji.to_string(),
+            })])
+        };
+
+        let request = tl::functions::messages::SendReaction {
+            big: false,
+            add_to_recent: true,
+            peer: input_peer,
+            msg_id: msg_id as i32,
+            reaction,
+        };
+
+        self.tg.client.invoke(&request).await.context(format!(
+            "Failed to {} reaction {} on message {} in chat {}",
+            if remove { "remove" } else { "add" },
+            emoji,
+            msg_id,
+            chat_id
+        ))?;
+
+        Ok(())
+    }
+
     /// Resolve a chat ID to a PeerRef we can use for API calls.
     /// Iterates dialogs to find the matching peer.
     async fn resolve_peer_ref(&self, chat_id: i64) -> Result<PeerRef> {

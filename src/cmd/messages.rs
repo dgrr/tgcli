@@ -198,6 +198,21 @@ pub enum MessagesCommand {
         #[arg(long)]
         pm_oneside: bool,
     },
+    /// Add or remove a reaction from a message
+    React {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID to react to
+        #[arg(long, name = "message")]
+        msg_id: i64,
+        /// Emoji reaction (e.g., "👍", "❤️", "🔥")
+        #[arg(long)]
+        emoji: String,
+        /// Remove the reaction instead of adding it
+        #[arg(long)]
+        remove: bool,
+    },
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
@@ -526,6 +541,39 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
         }
         MessagesCommand::Export { .. } => {
             anyhow::bail!("Export command is not yet implemented");
+        }
+        MessagesCommand::React {
+            chat,
+            msg_id,
+            emoji,
+            remove,
+        } => {
+            // React requires network access
+            let app = App::new(cli).await?;
+
+            app.send_reaction(*chat, *msg_id, emoji, *remove).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "success": true,
+                    "chat_id": chat,
+                    "message_id": msg_id,
+                    "emoji": emoji,
+                    "removed": remove,
+                }))?;
+            } else {
+                if *remove {
+                    println!(
+                        "Removed reaction {} from message {} in chat {}",
+                        emoji, msg_id, chat
+                    );
+                } else {
+                    println!(
+                        "Added reaction {} to message {} in chat {}",
+                        emoji, msg_id, chat
+                    );
+                }
+            }
         }
     }
     Ok(())
