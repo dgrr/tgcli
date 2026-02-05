@@ -24,7 +24,7 @@ pub struct ReadArgs {
 }
 
 pub async fn run(cli: &Cli, args: &ReadArgs) -> Result<()> {
-    let store_dir = cli.store_dir();
+    let _store_dir = cli.store_dir();
 
     // Validate: --topic and --all-topics are mutually exclusive
     if args.topic.is_some() && args.all_topics {

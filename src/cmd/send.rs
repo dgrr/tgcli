@@ -88,7 +88,7 @@ fn parse_schedule(
 }
 
 pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
-    let store_dir = cli.store_dir();
+    let _store_dir = cli.store_dir();
 
     // Parse schedule options
     let schedule_time = parse_schedule(&args.schedule, &args.schedule_in)?;

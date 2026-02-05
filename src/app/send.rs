@@ -2204,8 +2204,8 @@ fn extract_invite_hash(link: &str) -> Result<String> {
     let link = link.trim();
 
     // If it starts with +, it's already the hash
-    if link.starts_with('+') {
-        return Ok(link[1..].to_string());
+    if let Some(hash) = link.strip_prefix('+') {
+        return Ok(hash.to_string());
     }
 
     // Try to extract from URL

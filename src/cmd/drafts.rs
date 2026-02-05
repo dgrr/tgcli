@@ -57,22 +57,20 @@ pub async fn run(cli: &Cli, cmd: &DraftsCommand) -> Result<()> {
                     "count": enriched.len(),
                     "drafts": enriched,
                 }))?;
+            } else if enriched.is_empty() {
+                println!("No drafts found.");
             } else {
-                if enriched.is_empty() {
-                    println!("No drafts found.");
-                } else {
-                    println!("{:<16} {:<30} {:<20} TEXT", "CHAT_ID", "CHAT_NAME", "DATE");
-                    for d in &enriched {
-                        let chat_name = d.chat_name.as_deref().unwrap_or("-");
-                        let text_preview = out::truncate(&d.text.replace('\n', " "), 50);
-                        println!(
-                            "{:<16} {:<30} {:<20} {}",
-                            d.chat_id,
-                            out::truncate(chat_name, 28),
-                            &d.date[..std::cmp::min(19, d.date.len())],
-                            text_preview
-                        );
-                    }
+                println!("{:<16} {:<30} {:<20} TEXT", "CHAT_ID", "CHAT_NAME", "DATE");
+                for d in &enriched {
+                    let chat_name = d.chat_name.as_deref().unwrap_or("-");
+                    let text_preview = out::truncate(&d.text.replace('\n', " "), 50);
+                    println!(
+                        "{:<16} {:<30} {:<20} {}",
+                        d.chat_id,
+                        out::truncate(chat_name, 28),
+                        &d.date[..std::cmp::min(19, d.date.len())],
+                        text_preview
+                    );
                 }
             }
         }

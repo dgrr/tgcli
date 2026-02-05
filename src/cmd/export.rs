@@ -154,8 +154,6 @@ async fn fetch_messages_from_api(
     until: Option<DateTime<Utc>>,
     limit: Option<usize>,
 ) -> Result<Vec<ExportMessage>> {
-    use grammers_session::defs::PeerRef;
-
     let peer_ref = resolve_peer_ref(app, chat_id).await?;
 
     let mut message_iter = app.tg.client.iter_messages(peer_ref);
