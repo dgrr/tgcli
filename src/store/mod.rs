@@ -835,6 +835,32 @@ impl Store {
             Ok(None)
         }
     }
+
+    /// Get the oldest message ID for a chat (lowest message ID).
+    /// Returns None if no messages exist for the chat.
+    pub async fn get_oldest_message_id(
+        &self,
+        chat_id: i64,
+        topic_id: Option<i32>,
+    ) -> Result<Option<i64>> {
+        let mut rows = if let Some(tid) = topic_id {
+            self.conn
+                .query(
+                    "SELECT MIN(id) FROM messages WHERE chat_id = ?1 AND topic_id = ?2",
+                    (chat_id, tid),
+                )
+                .await?
+        } else {
+            self.conn
+                .query("SELECT MIN(id) FROM messages WHERE chat_id = ?1", [chat_id])
+                .await?
+        };
+        if let Some(row) = rows.next().await? {
+            Ok(row.get::<Option<i64>>(0)?)
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 fn parse_ts(s: &str) -> DateTime<Utc> {

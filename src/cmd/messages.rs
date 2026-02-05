@@ -7,6 +7,18 @@ use clap::Subcommand;
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum MessagesCommand {
+    /// Fetch older messages from Telegram (backfill history)
+    Fetch {
+        /// Chat ID (required)
+        #[arg(long)]
+        chat: i64,
+        /// Topic ID (for forum groups)
+        #[arg(long)]
+        topic: Option<i32>,
+        /// Number of messages to fetch
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
     /// List messages
     List {
         /// Chat ID
@@ -93,6 +105,41 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
     let store = Store::open(&cli.store_dir()).await?;
 
     match cmd {
+        MessagesCommand::Fetch { chat, topic, limit } => {
+            // Get oldest message ID we have for this chat
+            let oldest_id = store.get_oldest_message_id(*chat, *topic).await?;
+
+            // Requires network access
+            let app = App::new(cli).await?;
+
+            let fetched = app
+                .backfill_messages(*chat, *topic, oldest_id, *limit)
+                .await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "chat_id": chat,
+                    "topic_id": topic,
+                    "offset_id": oldest_id,
+                    "fetched": fetched,
+                }))?;
+            } else {
+                if let Some(oid) = oldest_id {
+                    println!(
+                        "Fetched {} messages older than ID {} from chat {}",
+                        fetched, oid, chat
+                    );
+                } else {
+                    println!(
+                        "Fetched {} messages from chat {} (no prior messages)",
+                        fetched, chat
+                    );
+                }
+                if let Some(tid) = topic {
+                    println!("  (topic: {})", tid);
+                }
+            }
+        }
         MessagesCommand::List {
             chat,
             topic,

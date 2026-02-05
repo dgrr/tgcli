@@ -254,4 +254,90 @@ impl App {
         }
         anyhow::bail!("Chat {} not found. Make sure you've synced first.", chat_id);
     }
+
+    /// Backfill (fetch older) messages for a chat.
+    /// Fetches messages older than `offset_id` (going backwards in time).
+    /// If `offset_id` is None, fetches from the latest messages.
+    /// Returns the number of new messages fetched and stored.
+    pub async fn backfill_messages(
+        &self,
+        chat_id: i64,
+        topic_id: Option<i32>,
+        offset_id: Option<i64>,
+        limit: usize,
+    ) -> Result<usize> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        // Check if this chat is a forum
+        let chat = self.store.get_chat(chat_id).await?;
+        let is_forum = chat.map(|c| c.is_forum).unwrap_or(false);
+
+        let mut message_iter = self.tg.client.iter_messages(peer_ref);
+
+        // Set offset_id if provided (fetch messages older than this)
+        if let Some(oid) = offset_id {
+            message_iter = message_iter.offset_id(oid as i32);
+        }
+
+        let mut count = 0;
+        while let Some(msg) = message_iter.next().await? {
+            if count >= limit {
+                break;
+            }
+
+            // If fetching for a specific topic, filter messages
+            let msg_topic_id = if is_forum {
+                extract_topic_id_from_raw(&msg.raw)
+            } else {
+                None
+            };
+
+            if topic_id.is_some() && msg_topic_id != topic_id {
+                continue;
+            }
+
+            let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+            let from_me = msg.outgoing();
+            let text = msg.text().to_string();
+            let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+            let media_type = msg.media().map(|_| "media".to_string());
+
+            self.store
+                .upsert_message(UpsertMessageParams {
+                    id: msg.id() as i64,
+                    chat_id,
+                    sender_id,
+                    ts: msg.date(),
+                    edit_ts: msg.edit_date(),
+                    from_me,
+                    text,
+                    media_type,
+                    media_path: None,
+                    reply_to_id,
+                    topic_id: msg_topic_id,
+                })
+                .await?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+}
+
+/// Extract topic_id from a raw TL message
+fn extract_topic_id_from_raw(msg: &tl::enums::Message) -> Option<i32> {
+    match msg {
+        tl::enums::Message::Message(m) => {
+            if let Some(tl::enums::MessageReplyHeader::Header(header)) = &m.reply_to {
+                if header.forum_topic {
+                    header.reply_to_top_id.or(header.reply_to_msg_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
