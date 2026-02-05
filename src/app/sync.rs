@@ -210,7 +210,8 @@ impl App {
     pub async fn sync(&mut self, opts: SyncOptions) -> Result<SyncResult> {
         let mut messages_stored: u64 = 0;
         let mut chats_stored: u64 = 0;
-        let mut per_chat: Vec<ChatSyncSummary> = Vec::new();
+        let mut per_chat_map: std::collections::HashMap<i64, ChatSyncSummary> =
+            std::collections::HashMap::new();
 
         // Build ignore set for fast lookup.
         let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
@@ -462,7 +463,7 @@ impl App {
             // Track per-chat summary if messages were synced
             if count > 0 {
                 // Build topic summaries for forums
-                let topics = if is_forum && !topic_counts.is_empty() {
+                let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty() {
                     let mut topic_summaries = Vec::new();
                     for (tid, msg_count) in &topic_counts {
                         let topic_name = self
@@ -479,19 +480,35 @@ impl App {
                             messages_synced: *msg_count,
                         });
                     }
-                    // Sort by message count descending
-                    topic_summaries.sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
                     topic_summaries
                 } else {
                     Vec::new()
                 };
 
-                per_chat.push(ChatSyncSummary {
-                    chat_id: id,
-                    chat_name: name.clone(),
-                    messages_synced: count as u64,
-                    topics,
-                });
+                // Aggregate into per_chat_map
+                per_chat_map
+                    .entry(id)
+                    .and_modify(|existing| {
+                        existing.messages_synced += count as u64;
+                        // Merge topics by topic_id
+                        for new_topic in &new_topics {
+                            if let Some(existing_topic) = existing
+                                .topics
+                                .iter_mut()
+                                .find(|t| t.topic_id == new_topic.topic_id)
+                            {
+                                existing_topic.messages_synced += new_topic.messages_synced;
+                            } else {
+                                existing.topics.push(new_topic.clone());
+                            }
+                        }
+                    })
+                    .or_insert(ChatSyncSummary {
+                        chat_id: id,
+                        chat_name: name.clone(),
+                        messages_synced: count as u64,
+                        topics: new_topics,
+                    });
             }
         }
 
@@ -667,7 +684,7 @@ impl App {
             // Track per-chat summary if messages were synced
             if count > 0 {
                 // Build topic summaries for forums
-                let topics = if is_forum && !topic_counts.is_empty() {
+                let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty() {
                     let mut topic_summaries = Vec::new();
                     for (tid, msg_count) in &topic_counts {
                         let topic_name = self
@@ -684,19 +701,35 @@ impl App {
                             messages_synced: *msg_count,
                         });
                     }
-                    // Sort by message count descending
-                    topic_summaries.sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
                     topic_summaries
                 } else {
                     Vec::new()
                 };
 
-                per_chat.push(ChatSyncSummary {
-                    chat_id: id,
-                    chat_name: name.clone(),
-                    messages_synced: count as u64,
-                    topics,
-                });
+                // Aggregate into per_chat_map
+                per_chat_map
+                    .entry(id)
+                    .and_modify(|existing| {
+                        existing.messages_synced += count as u64;
+                        // Merge topics by topic_id
+                        for new_topic in &new_topics {
+                            if let Some(existing_topic) = existing
+                                .topics
+                                .iter_mut()
+                                .find(|t| t.topic_id == new_topic.topic_id)
+                            {
+                                existing_topic.messages_synced += new_topic.messages_synced;
+                            } else {
+                                existing.topics.push(new_topic.clone());
+                            }
+                        }
+                    })
+                    .or_insert(ChatSyncSummary {
+                        chat_id: id,
+                        chat_name: name.clone(),
+                        messages_synced: count as u64,
+                        topics: new_topics,
+                    });
             }
         }
 
@@ -708,6 +741,17 @@ impl App {
             "Sync complete: {} chats, {} messages",
             chats_stored, messages_stored
         );
+
+        // Convert HashMap to Vec and sort topics by message count descending
+        let per_chat: Vec<ChatSyncSummary> = per_chat_map
+            .into_values()
+            .map(|mut summary| {
+                summary
+                    .topics
+                    .sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
+                summary
+            })
+            .collect();
 
         Ok(SyncResult {
             messages_stored,
