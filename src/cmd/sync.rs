@@ -83,7 +83,7 @@ fn build_output_mode(common: &CommonSyncArgs) -> crate::app::sync::OutputMode {
     }
 }
 
-fn build_sync_options(common: &CommonSyncArgs, local_only: bool) -> crate::app::sync::SyncOptions {
+fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions {
     let output_mode = build_output_mode(common);
     let incremental = !common.full;
 
@@ -96,7 +96,6 @@ fn build_sync_options(common: &CommonSyncArgs, local_only: bool) -> crate::app::
         show_progress: !common.no_progress,
         incremental,
         messages_per_chat: common.messages_per_chat,
-        local_only,
     }
 }
 
@@ -183,24 +182,23 @@ fn print_sync_result(
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
     match &args.command {
         Some(SyncCommand::Chats { common }) => {
-            // Sync chats only (no messages) - just run normal sync but with 0 messages per chat
+            // Sync chats only (no messages)
             let mut app = App::new(cli).await?;
-            let mut opts = build_sync_options(common, false);
-            opts.messages_per_chat = 0;
-            let result = app.sync(opts).await?;
+            let opts = build_sync_options(common);
+            let result = app.sync_chats(opts).await?;
             print_sync_result(cli, common, &result, "chats-only");
         }
         Some(SyncCommand::Msgs { common }) => {
             // Sync messages only from local chats (uses stored access_hash, no iter_dialogs)
             let mut app = App::new(cli).await?;
-            let opts = build_sync_options(common, true); // local_only = true
-            let result = app.sync(opts).await?;
+            let opts = build_sync_options(common);
+            let result = app.sync_msgs(opts).await?;
             print_sync_result(cli, common, &result, "msgs-only");
         }
         None => {
             // Default: sync both chats and messages
             let mut app = App::new(cli).await?;
-            let opts = build_sync_options(&args.common, false);
+            let opts = build_sync_options(&args.common);
             let incremental = !args.common.full;
             let result = app.sync(opts).await?;
             let mode_str = if incremental { "incremental" } else { "full" };

@@ -26,7 +26,8 @@ use clap::Subcommand;
 pub enum Command {
     /// Authenticate with Telegram
     Auth(auth::AuthArgs),
-    /// Sync messages from Telegram
+    /// Sync chats and messages from Telegram
+    #[command(subcommand_negates_reqs = true)]
     Sync(sync::SyncArgs),
     /// Clear local database (keeps session)
     Clear(clear::ClearArgs),
