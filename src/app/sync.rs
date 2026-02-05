@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use grammers_client::types::{Peer, Update};
 use grammers_client::UpdatesConfiguration;
 use grammers_session::defs::PeerRef;
+use std::collections::HashSet;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy)]
@@ -28,6 +29,8 @@ pub struct SyncOptions {
     pub download_media: bool,
     pub enable_socket: bool,
     pub idle_exit_secs: u64,
+    pub ignore_chat_ids: Vec<i64>,
+    pub ignore_channels: bool,
 }
 
 pub struct SyncResult {
@@ -40,6 +43,20 @@ impl App {
         let mut messages_stored: u64 = 0;
         let mut chats_stored: u64 = 0;
 
+        // Build ignore set for fast lookup.
+        let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
+
+        // Helper to check if a chat should be ignored.
+        let should_ignore = |chat_id: i64, kind: &str| -> bool {
+            if ignore_set.contains(&chat_id) {
+                return true;
+            }
+            if opts.ignore_channels && kind == "channel" {
+                return true;
+            }
+            false
+        };
+
         let client = &self.tg.client;
 
         // Phase 1: Bootstrap — fetch recent dialogs and their messages
@@ -49,6 +66,11 @@ impl App {
             let peer = dialog.peer();
             let (kind, name, username) = peer_info(peer);
             let id = peer.id().bare_id();
+
+            // Skip ignored chats.
+            if should_ignore(id, &kind) {
+                continue;
+            }
 
             self.store.upsert_chat(id, &kind, &name, username.as_deref(), None)?;
             chats_stored += 1;
@@ -199,6 +221,11 @@ impl App {
                                     };
                                     let chat_id = msg.peer_id().bare_id();
 
+                                    // Skip ignored chats.
+                                    if should_ignore(chat_id, &kind) {
+                                        continue;
+                                    }
+
                                     let sender_id =
                                         msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
                                     let msg_ts = msg.date();
@@ -269,6 +296,16 @@ impl App {
                                 }
                                 Update::NewMessage(msg) if msg.outgoing() => {
                                     let chat_id = msg.peer_id().bare_id();
+                                    let (kind, _, _) = match msg.peer() {
+                                        Ok(p) => peer_info(&p),
+                                        Err(_) => ("unknown".to_string(), "".to_string(), None),
+                                    };
+
+                                    // Skip ignored chats.
+                                    if should_ignore(chat_id, &kind) {
+                                        continue;
+                                    }
+
                                     let msg_ts = msg.date();
 
                                     self.store.upsert_message(UpsertMessageParams {
@@ -288,6 +325,16 @@ impl App {
                                 }
                                 Update::MessageEdited(msg) => {
                                     let chat_id = msg.peer_id().bare_id();
+                                    let (kind, _, _) = match msg.peer() {
+                                        Ok(p) => peer_info(&p),
+                                        Err(_) => ("unknown".to_string(), "".to_string(), None),
+                                    };
+
+                                    // Skip ignored chats.
+                                    if should_ignore(chat_id, &kind) {
+                                        continue;
+                                    }
+
                                     let msg_ts = msg.date();
 
                                     self.store.upsert_message(UpsertMessageParams {

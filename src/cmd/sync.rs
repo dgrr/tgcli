@@ -33,6 +33,14 @@ pub struct SyncArgs {
     /// Idle exit timeout in seconds (for --once mode)
     #[arg(long, default_value = "30")]
     pub idle_exit: u64,
+
+    /// Chat IDs to ignore (skip during sync)
+    #[arg(long = "ignore", value_name = "CHAT_ID")]
+    pub ignore_chat_ids: Vec<i64>,
+
+    /// Skip all channels
+    #[arg(long, default_value_t = false)]
+    pub ignore_channels: bool,
 }
 
 pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
@@ -60,6 +68,8 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         download_media: args.download_media,
         enable_socket: args.socket,
         idle_exit_secs: args.idle_exit,
+        ignore_chat_ids: args.ignore_chat_ids.clone(),
+        ignore_channels: args.ignore_channels,
     };
 
     let result = app.sync(opts).await?;
