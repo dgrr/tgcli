@@ -24,11 +24,11 @@ pub enum ChatsCommand {
 }
 
 pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
-    let store = Store::open(&cli.store_dir())?;
+    let store = Store::open(&cli.store_dir()).await?;
 
     match cmd {
         ChatsCommand::List { query, limit } => {
-            let chats = store.list_chats(query.as_deref(), *limit)?;
+            let chats = store.list_chats(query.as_deref(), *limit).await?;
 
             if cli.json {
                 out::write_json(&chats)?;
@@ -48,7 +48,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             }
         }
         ChatsCommand::Show { id } => {
-            let chat = store.get_chat(*id)?;
+            let chat = store.get_chat(*id).await?;
             match chat {
                 Some(c) => {
                     if cli.json {

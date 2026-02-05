@@ -24,11 +24,11 @@ pub enum ContactsCommand {
 }
 
 pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
-    let store = Store::open(&cli.store_dir())?;
+    let store = Store::open(&cli.store_dir()).await?;
 
     match cmd {
         ContactsCommand::Search { query, limit } => {
-            let contacts = store.search_contacts(query, *limit)?;
+            let contacts = store.search_contacts(query, *limit).await?;
 
             if cli.json {
                 out::write_json(&contacts)?;
@@ -50,7 +50,7 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
             }
         }
         ContactsCommand::Show { id } => {
-            let contact = store.get_contact(*id)?;
+            let contact = store.get_contact(*id).await?;
             match contact {
                 Some(c) => {
                     if cli.json {

@@ -32,7 +32,7 @@ impl App {
             anyhow::bail!("Session expired or not authenticated. Run `tgrs auth` first.");
         }
 
-        let store = Store::open(&store_dir)?;
+        let store = Store::open(&store_dir).await?;
 
         Ok(App {
             tg,
@@ -51,7 +51,7 @@ impl App {
         let session_path = format!("{}/session.db", store_dir);
 
         let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)?;
-        let store = Store::open(&store_dir)?;
+        let store = Store::open(&store_dir).await?;
 
         Ok(App {
             tg,

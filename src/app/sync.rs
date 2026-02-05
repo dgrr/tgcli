@@ -72,7 +72,7 @@ impl App {
                 continue;
             }
 
-            self.store.upsert_chat(id, &kind, &name, username.as_deref(), None)?;
+            self.store.upsert_chat(id, &kind, &name, username.as_deref(), None).await?;
             chats_stored += 1;
 
             // Also store as contact if it's a user
@@ -83,7 +83,7 @@ impl App {
                     user.first_name().unwrap_or(""),
                     user.last_name().unwrap_or(""),
                     user.phone().unwrap_or(""),
-                )?;
+                ).await?;
             }
 
             // Fetch recent messages for this chat
@@ -120,7 +120,7 @@ impl App {
                     text: text.clone(),
                     media_type,
                     reply_to_id,
-                })?;
+                }).await?;
                 messages_stored += 1;
 
                 // Output
@@ -170,7 +170,7 @@ impl App {
             // Update chat's last_message_ts
             if let Some(ts) = latest_ts {
                 self.store
-                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts))?;
+                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts)).await?;
             }
         }
 
@@ -237,7 +237,7 @@ impl App {
                                         &name,
                                         username.as_deref(),
                                         Some(msg_ts),
-                                    )?;
+                                    ).await?;
 
                                     self.store.upsert_message(UpsertMessageParams {
                                         id: msg.id() as i64,
@@ -251,7 +251,7 @@ impl App {
                                         reply_to_id: msg
                                             .reply_to_message_id()
                                             .map(|id| id as i64),
-                                    })?;
+                                    }).await?;
                                     messages_stored += 1;
 
                                     if opts.mark_read {
@@ -320,7 +320,7 @@ impl App {
                                         reply_to_id: msg
                                             .reply_to_message_id()
                                             .map(|id| id as i64),
-                                    })?;
+                                    }).await?;
                                     messages_stored += 1;
                                 }
                                 Update::MessageEdited(msg) => {
@@ -352,7 +352,7 @@ impl App {
                                         reply_to_id: msg
                                             .reply_to_message_id()
                                             .map(|id| id as i64),
-                                    })?;
+                                    }).await?;
                                 }
                                 _ => {}
                             }

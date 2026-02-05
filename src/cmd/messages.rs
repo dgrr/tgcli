@@ -90,7 +90,7 @@ pub enum MessagesCommand {
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
-    let store = Store::open(&cli.store_dir())?;
+    let store = Store::open(&cli.store_dir()).await?;
 
     match cmd {
         MessagesCommand::List {
@@ -111,7 +111,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 before: before_ts,
                 ignore_chats: ignore_chats.clone(),
                 ignore_channels: *ignore_channels,
-            })?;
+            }).await?;
 
             if cli.json {
                 out::write_json(&serde_json::json!({
@@ -158,7 +158,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 media_type: media_type.clone(),
                 ignore_chats: ignore_chats.clone(),
                 ignore_channels: *ignore_channels,
-            })?;
+            }).await?;
 
             if cli.json {
                 out::write_json(&serde_json::json!({
@@ -202,7 +202,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             before,
             after,
         } => {
-            let msgs = store.message_context(*chat, *id, *before, *after)?;
+            let msgs = store.message_context(*chat, *id, *before, *after).await?;
 
             if cli.json {
                 out::write_json(&msgs)?;
@@ -228,7 +228,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             }
         }
         MessagesCommand::Show { chat, id } => {
-            let msg = store.get_message(*chat, *id)?;
+            let msg = store.get_message(*chat, *id).await?;
             match msg {
                 Some(m) => {
                     if cli.json {

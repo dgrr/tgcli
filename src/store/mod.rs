@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlite::{Connection, State, Value};
 use std::path::Path;
+use turso::{Builder, Connection, Database, Row};
 
 pub struct Store {
     conn: Connection,
@@ -74,23 +74,28 @@ pub struct UpsertMessageParams {
 }
 
 impl Store {
-    pub fn open(store_dir: &str) -> Result<Self> {
+    pub async fn open(store_dir: &str) -> Result<Self> {
         std::fs::create_dir_all(store_dir)?;
         let db_path = Path::new(store_dir).join("tgrs.db");
-        let conn = Connection::open(&db_path)?;
+        let db_path_str = db_path.to_string_lossy();
+        let db: Database = Builder::new_local(&db_path_str)
+            .build()
+            .await
+            .context("Failed to open database")?;
+        let conn = db.connect().context("Failed to connect to database")?;
 
-        conn.execute("PRAGMA journal_mode=WAL")?;
-        conn.execute("PRAGMA busy_timeout=5000")?;
+        conn.execute("PRAGMA journal_mode=WAL", ()).await?;
+        conn.execute("PRAGMA busy_timeout=5000", ()).await?;
 
         let mut store = Store {
             conn,
             has_fts: false,
         };
-        store.migrate()?;
+        store.migrate().await?;
         Ok(store)
     }
 
-    fn migrate(&mut self) -> Result<()> {
+    async fn migrate(&mut self) -> Result<()> {
         self.conn
             .execute(
                 "
@@ -127,12 +132,16 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
             CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
             ",
+                (),
             )
+            .await
             .context("Failed to create base tables")?;
 
         // Try to create FTS5 table
-        let fts_result = self.conn.execute(
-            "
+        let fts_result = self
+            .conn
+            .execute(
+                "
             CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                 text,
                 content='messages',
@@ -150,7 +159,9 @@ impl Store {
                 INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
             END;
             ",
-        );
+                (),
+            )
+            .await;
 
         self.has_fts = fts_result.is_ok();
         if !self.has_fts {
@@ -166,7 +177,7 @@ impl Store {
 
     // --- Chats ---
 
-    pub fn upsert_chat(
+    pub async fn upsert_chat(
         &self,
         id: i64,
         kind: &str,
@@ -175,68 +186,65 @@ impl Store {
         last_message_ts: Option<DateTime<Utc>>,
     ) -> Result<()> {
         let ts_str = last_message_ts.map(|t| t.to_rfc3339());
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO chats (id, kind, name, username, last_message_ts)
-             VALUES (:id, :kind, :name, :username, :ts)
-             ON CONFLICT(id) DO UPDATE SET
-                kind = COALESCE(:kind, kind),
-                name = CASE WHEN :name != '' THEN :name ELSE name END,
-                username = COALESCE(:username, username),
-                last_message_ts = CASE WHEN :ts IS NOT NULL AND (:ts > last_message_ts OR last_message_ts IS NULL)
-                    THEN :ts ELSE last_message_ts END",
-        )?;
-        stmt.bind::<&[(_, Value)]>(
-            &[
-                (":id", id.into()),
-                (":kind", kind.into()),
-                (":name", name.into()),
-                (
-                    ":username",
-                    username.map(Value::from).unwrap_or(Value::Null),
-                ),
-                (":ts", ts_str.map(Value::from).unwrap_or(Value::Null)),
-            ][..],
-        )?;
-        stmt.next()?;
+        self.conn
+            .execute(
+                "INSERT INTO chats (id, kind, name, username, last_message_ts)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                    kind = COALESCE(?2, kind),
+                    name = CASE WHEN ?3 != '' THEN ?3 ELSE name END,
+                    username = COALESCE(?4, username),
+                    last_message_ts = CASE WHEN ?5 IS NOT NULL AND (?5 > last_message_ts OR last_message_ts IS NULL)
+                        THEN ?5 ELSE last_message_ts END",
+                (id, kind, name, username, ts_str),
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn list_chats(&self, query: Option<&str>, limit: i64) -> Result<Vec<Chat>> {
+    pub async fn list_chats(&self, query: Option<&str>, limit: i64) -> Result<Vec<Chat>> {
         let mut chats = Vec::new();
 
         if let Some(q) = query {
             let pattern = format!("%{}%", q);
-            let mut stmt = self.conn.prepare(
-                "SELECT id, kind, name, username, last_message_ts FROM chats
-                 WHERE name LIKE :pat OR username LIKE :pat
-                 ORDER BY last_message_ts DESC LIMIT :limit",
-            )?;
-            stmt.bind::<&[(_, Value)]>(
-                &[(":pat", pattern.into()), (":limit", limit.into())][..],
-            )?;
-            while let Ok(State::Row) = stmt.next() {
-                chats.push(row_to_chat(&stmt));
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT id, kind, name, username, last_message_ts FROM chats
+                     WHERE name LIKE ?1 OR username LIKE ?1
+                     ORDER BY last_message_ts DESC LIMIT ?2",
+                    (pattern.as_str(), limit),
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                chats.push(row_to_chat(&row)?);
             }
         } else {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, kind, name, username, last_message_ts FROM chats
-                 ORDER BY last_message_ts DESC LIMIT :limit",
-            )?;
-            stmt.bind::<&[(_, Value)]>(&[(":limit", limit.into())][..])?;
-            while let Ok(State::Row) = stmt.next() {
-                chats.push(row_to_chat(&stmt));
+            let mut rows = self
+                .conn
+                .query(
+                    "SELECT id, kind, name, username, last_message_ts FROM chats
+                     ORDER BY last_message_ts DESC LIMIT ?1",
+                    [limit],
+                )
+                .await?;
+            while let Some(row) = rows.next().await? {
+                chats.push(row_to_chat(&row)?);
             }
         }
         Ok(chats)
     }
 
-    pub fn get_chat(&self, id: i64) -> Result<Option<Chat>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, kind, name, username, last_message_ts FROM chats WHERE id = :id",
-        )?;
-        stmt.bind::<&[(_, Value)]>(&[(":id", id.into())][..])?;
-        if let Ok(State::Row) = stmt.next() {
-            Ok(Some(row_to_chat(&stmt)))
+    pub async fn get_chat(&self, id: i64) -> Result<Option<Chat>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, kind, name, username, last_message_ts FROM chats WHERE id = ?1",
+                [id],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row_to_chat(&row)?))
         } else {
             Ok(None)
         }
@@ -244,7 +252,7 @@ impl Store {
 
     // --- Contacts ---
 
-    pub fn upsert_contact(
+    pub async fn upsert_contact(
         &self,
         user_id: i64,
         username: Option<&str>,
@@ -252,55 +260,49 @@ impl Store {
         last_name: &str,
         phone: &str,
     ) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO contacts (user_id, username, first_name, last_name, phone)
-             VALUES (:uid, :uname, :fname, :lname, :phone)
-             ON CONFLICT(user_id) DO UPDATE SET
-                username = COALESCE(:uname, username),
-                first_name = CASE WHEN :fname != '' THEN :fname ELSE first_name END,
-                last_name = CASE WHEN :lname != '' THEN :lname ELSE last_name END,
-                phone = CASE WHEN :phone != '' THEN :phone ELSE phone END",
-        )?;
-        stmt.bind::<&[(_, Value)]>(
-            &[
-                (":uid", user_id.into()),
-                (
-                    ":uname",
-                    username.map(Value::from).unwrap_or(Value::Null),
-                ),
-                (":fname", first_name.into()),
-                (":lname", last_name.into()),
-                (":phone", phone.into()),
-            ][..],
-        )?;
-        stmt.next()?;
+        self.conn
+            .execute(
+                "INSERT INTO contacts (user_id, username, first_name, last_name, phone)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                    username = COALESCE(?2, username),
+                    first_name = CASE WHEN ?3 != '' THEN ?3 ELSE first_name END,
+                    last_name = CASE WHEN ?4 != '' THEN ?4 ELSE last_name END,
+                    phone = CASE WHEN ?5 != '' THEN ?5 ELSE phone END",
+                (user_id, username, first_name, last_name, phone),
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn search_contacts(&self, query: &str, limit: i64) -> Result<Vec<Contact>> {
+    pub async fn search_contacts(&self, query: &str, limit: i64) -> Result<Vec<Contact>> {
         let pattern = format!("%{}%", query);
-        let mut stmt = self.conn.prepare(
-            "SELECT user_id, username, first_name, last_name, phone FROM contacts
-             WHERE first_name LIKE :pat OR last_name LIKE :pat OR username LIKE :pat OR phone LIKE :pat
-             ORDER BY first_name LIMIT :limit",
-        )?;
-        stmt.bind::<&[(_, Value)]>(
-            &[(":pat", pattern.into()), (":limit", limit.into())][..],
-        )?;
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT user_id, username, first_name, last_name, phone FROM contacts
+                 WHERE first_name LIKE ?1 OR last_name LIKE ?1 OR username LIKE ?1 OR phone LIKE ?1
+                 ORDER BY first_name LIMIT ?2",
+                (pattern.as_str(), limit),
+            )
+            .await?;
         let mut contacts = Vec::new();
-        while let Ok(State::Row) = stmt.next() {
-            contacts.push(row_to_contact(&stmt));
+        while let Some(row) = rows.next().await? {
+            contacts.push(row_to_contact(&row)?);
         }
         Ok(contacts)
     }
 
-    pub fn get_contact(&self, user_id: i64) -> Result<Option<Contact>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT user_id, username, first_name, last_name, phone FROM contacts WHERE user_id = :uid",
-        )?;
-        stmt.bind::<&[(_, Value)]>(&[(":uid", user_id.into())][..])?;
-        if let Ok(State::Row) = stmt.next() {
-            Ok(Some(row_to_contact(&stmt)))
+    pub async fn get_contact(&self, user_id: i64) -> Result<Option<Contact>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT user_id, username, first_name, last_name, phone FROM contacts WHERE user_id = ?1",
+                [user_id],
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row_to_contact(&row)?))
         } else {
             Ok(None)
         }
@@ -308,123 +310,157 @@ impl Store {
 
     // --- Messages ---
 
-    pub fn upsert_message(&self, p: UpsertMessageParams) -> Result<()> {
-        let ts_str: Value = p.ts.to_rfc3339().into();
-        let edit_ts_str: Value = p
-            .edit_ts
-            .map(|t| Value::from(t.to_rfc3339()))
-            .unwrap_or(Value::Null);
-        let media: Value = p
-            .media_type
-            .as_deref()
-            .map(Value::from)
-            .unwrap_or(Value::Null);
-        let reply_to: Value = p.reply_to_id.map(Value::from).unwrap_or(Value::Null);
+    pub async fn upsert_message(&self, p: UpsertMessageParams) -> Result<()> {
+        let ts_str = p.ts.to_rfc3339();
+        let edit_ts_str = p.edit_ts.map(|t| t.to_rfc3339());
+        let from_me_int = p.from_me as i64;
 
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id)
-             VALUES (:id, :chat_id, :sender_id, :ts, :edit_ts, :from_me, :text, :media_type, :reply_to_id)
-             ON CONFLICT(chat_id, id) DO UPDATE SET
-                sender_id = :sender_id,
-                ts = :ts,
-                edit_ts = COALESCE(:edit_ts, edit_ts),
-                from_me = :from_me,
-                text = CASE WHEN :text != '' THEN :text ELSE text END,
-                media_type = COALESCE(:media_type, media_type),
-                reply_to_id = COALESCE(:reply_to_id, reply_to_id)",
-        )?;
-        stmt.bind::<&[(_, Value)]>(
-            &[
-                (":id", p.id.into()),
-                (":chat_id", p.chat_id.into()),
-                (":sender_id", p.sender_id.into()),
-                (":ts", ts_str),
-                (":edit_ts", edit_ts_str),
-                (":from_me", (p.from_me as i64).into()),
-                (":text", p.text.as_str().into()),
-                (":media_type", media),
-                (":reply_to_id", reply_to),
-            ][..],
-        )?;
-        stmt.next()?;
+        self.conn
+            .execute(
+                "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(chat_id, id) DO UPDATE SET
+                    sender_id = ?3,
+                    ts = ?4,
+                    edit_ts = COALESCE(?5, edit_ts),
+                    from_me = ?6,
+                    text = CASE WHEN ?7 != '' THEN ?7 ELSE text END,
+                    media_type = COALESCE(?8, media_type),
+                    reply_to_id = COALESCE(?9, reply_to_id)",
+                (
+                    p.id,
+                    p.chat_id,
+                    p.sender_id,
+                    ts_str.as_str(),
+                    edit_ts_str.as_deref(),
+                    from_me_int,
+                    p.text.as_str(),
+                    p.media_type.as_deref(),
+                    p.reply_to_id,
+                ),
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn list_messages(&self, p: ListMessagesParams) -> Result<Vec<Message>> {
-        // Build dynamic SQL
+    pub async fn list_messages(&self, p: ListMessagesParams) -> Result<Vec<Message>> {
+        // Build dynamic SQL using positional parameters
         let mut conditions = vec!["1=1".to_string()];
-        let mut binds: Vec<(String, Value)> = Vec::new();
+        let mut param_idx = 1;
 
-        if let Some(chat_id) = p.chat_id {
-            conditions.push("m.chat_id = :chat_id".to_string());
-            binds.push((":chat_id".to_string(), chat_id.into()));
+        // We'll build the SQL with positional params and collect values
+        // Due to turso's typed params, we'll use a simpler approach with string formatting
+        // for the dynamic WHERE clause, but still use params for the actual values
+        
+        let chat_filter = p.chat_id.map(|_| {
+            let cond = format!("m.chat_id = ?{}", param_idx);
+            param_idx += 1;
+            cond
+        });
+        if let Some(c) = &chat_filter {
+            conditions.push(c.clone());
         }
-        if let Some(ref after) = p.after {
-            conditions.push("m.ts > :after".to_string());
-            binds.push((":after".to_string(), after.to_rfc3339().into()));
+
+        let after_filter = p.after.as_ref().map(|_| {
+            let cond = format!("m.ts > ?{}", param_idx);
+            param_idx += 1;
+            cond
+        });
+        if let Some(c) = &after_filter {
+            conditions.push(c.clone());
         }
-        if let Some(ref before) = p.before {
-            conditions.push("m.ts < :before".to_string());
-            binds.push((":before".to_string(), before.to_rfc3339().into()));
+
+        let before_filter = p.before.as_ref().map(|_| {
+            let cond = format!("m.ts < ?{}", param_idx);
+            param_idx += 1;
+            cond
+        });
+        if let Some(c) = &before_filter {
+            conditions.push(c.clone());
         }
-        for (i, ignore_id) in p.ignore_chats.iter().enumerate() {
-            let param = format!(":ignore_{}", i);
-            conditions.push(format!("m.chat_id != {}", param));
-            binds.push((param, (*ignore_id).into()));
+
+        // For ignore_chats, we'll use NOT IN with literal values (safe since they're i64)
+        if !p.ignore_chats.is_empty() {
+            let ids: Vec<String> = p.ignore_chats.iter().map(|id| id.to_string()).collect();
+            conditions.push(format!("m.chat_id NOT IN ({})", ids.join(",")));
         }
+
         if p.ignore_channels {
             conditions.push("COALESCE(c.kind, '') != 'channel'".to_string());
         }
+
+        // Limit param
+        let limit_param_idx = param_idx;
 
         let sql = format!(
             "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id
              FROM messages m
              LEFT JOIN chats c ON c.id = m.chat_id
-             WHERE {} ORDER BY m.ts DESC LIMIT :limit",
-            conditions.join(" AND ")
+             WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
+            conditions.join(" AND "),
+            limit_param_idx
         );
-        binds.push((":limit".to_string(), p.limit.into()));
 
-        let mut stmt = self.conn.prepare(&sql)?;
-        let bind_refs: Vec<(&str, Value)> = binds.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        stmt.bind::<&[(&str, Value)]>(&bind_refs)?;
+        // Build params tuple dynamically - we need to handle this carefully
+        // Using a Vec<turso::Value> approach
+        use turso::Value;
+        let mut params: Vec<Value> = Vec::new();
+        
+        if let Some(chat_id) = p.chat_id {
+            params.push(Value::Integer(chat_id));
+        }
+        if let Some(ref after) = p.after {
+            params.push(Value::Text(after.to_rfc3339()));
+        }
+        if let Some(ref before) = p.before {
+            params.push(Value::Text(before.to_rfc3339()));
+        }
+        params.push(Value::Integer(p.limit));
+
+        let mut rows = self.conn.query(&sql, turso::params_from_iter(params)).await?;
 
         let mut msgs = Vec::new();
-        while let Ok(State::Row) = stmt.next() {
-            msgs.push(row_to_message(&stmt));
+        while let Some(row) = rows.next().await? {
+            msgs.push(row_to_message(&row)?);
         }
         msgs.reverse(); // chronological order
         Ok(msgs)
     }
 
-    pub fn search_messages(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
+    pub async fn search_messages(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
         if self.has_fts {
-            self.search_messages_fts(p)
+            self.search_messages_fts(p).await
         } else {
-            self.search_messages_like(p)
+            self.search_messages_like(p).await
         }
     }
 
-    fn search_messages_fts(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
-        let mut conditions = vec!["messages_fts MATCH :query".to_string()];
-        let mut binds: Vec<(String, Value)> = vec![(":query".to_string(), p.query.clone().into())];
+    async fn search_messages_fts(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
+        use turso::Value;
+        
+        let mut conditions = vec!["messages_fts MATCH ?1".to_string()];
+        let mut params: Vec<Value> = vec![Value::Text(p.query.clone())];
+        let mut param_idx = 2;
 
         if let Some(chat_id) = p.chat_id {
-            conditions.push("m.chat_id = :chat_id".to_string());
-            binds.push((":chat_id".to_string(), chat_id.into()));
+            conditions.push(format!("m.chat_id = ?{}", param_idx));
+            params.push(Value::Integer(chat_id));
+            param_idx += 1;
         }
         if let Some(from_id) = p.from_id {
-            conditions.push("m.sender_id = :from_id".to_string());
-            binds.push((":from_id".to_string(), from_id.into()));
+            conditions.push(format!("m.sender_id = ?{}", param_idx));
+            params.push(Value::Integer(from_id));
+            param_idx += 1;
         }
         if let Some(ref media_type) = p.media_type {
-            conditions.push("m.media_type = :media_type".to_string());
-            binds.push((":media_type".to_string(), media_type.clone().into()));
+            conditions.push(format!("m.media_type = ?{}", param_idx));
+            params.push(Value::Text(media_type.clone()));
+            param_idx += 1;
         }
-        for (i, ignore_id) in p.ignore_chats.iter().enumerate() {
-            let param = format!(":ignore_{}", i);
-            conditions.push(format!("m.chat_id != {}", param));
-            binds.push((param, (*ignore_id).into()));
+        
+        if !p.ignore_chats.is_empty() {
+            let ids: Vec<String> = p.ignore_chats.iter().map(|id| id.to_string()).collect();
+            conditions.push(format!("m.chat_id NOT IN ({})", ids.join(",")));
         }
         if p.ignore_channels {
             conditions.push("COALESCE(c.kind, '') != 'channel'".to_string());
@@ -436,45 +472,50 @@ impl Store {
              FROM messages m
              JOIN messages_fts ON messages_fts.rowid = m.rowid
              LEFT JOIN chats c ON c.id = m.chat_id
-             WHERE {} ORDER BY m.ts DESC LIMIT :limit",
-            conditions.join(" AND ")
+             WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
+            conditions.join(" AND "),
+            param_idx
         );
-        binds.push((":limit".to_string(), p.limit.into()));
+        params.push(Value::Integer(p.limit));
 
-        let mut stmt = self.conn.prepare(&sql)?;
-        let bind_refs: Vec<(&str, Value)> = binds.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        stmt.bind::<&[(&str, Value)]>(&bind_refs)?;
+        let mut rows = self.conn.query(&sql, turso::params_from_iter(params)).await?;
 
         let mut msgs = Vec::new();
-        while let Ok(State::Row) = stmt.next() {
-            let mut m = row_to_message(&stmt);
-            m.snippet = stmt.read::<String, _>("snippet").unwrap_or_default();
+        while let Some(row) = rows.next().await? {
+            let mut m = row_to_message(&row)?;
+            m.snippet = row.get::<String>(9).unwrap_or_default();
             msgs.push(m);
         }
         Ok(msgs)
     }
 
-    fn search_messages_like(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
+    async fn search_messages_like(&self, p: SearchMessagesParams) -> Result<Vec<Message>> {
+        use turso::Value;
+        
         let pattern = format!("%{}%", p.query);
-        let mut conditions = vec!["m.text LIKE :pat".to_string()];
-        let mut binds: Vec<(String, Value)> = vec![(":pat".to_string(), pattern.into())];
+        let mut conditions = vec!["m.text LIKE ?1".to_string()];
+        let mut params: Vec<Value> = vec![Value::Text(pattern)];
+        let mut param_idx = 2;
 
         if let Some(chat_id) = p.chat_id {
-            conditions.push("m.chat_id = :chat_id".to_string());
-            binds.push((":chat_id".to_string(), chat_id.into()));
+            conditions.push(format!("m.chat_id = ?{}", param_idx));
+            params.push(Value::Integer(chat_id));
+            param_idx += 1;
         }
         if let Some(from_id) = p.from_id {
-            conditions.push("m.sender_id = :from_id".to_string());
-            binds.push((":from_id".to_string(), from_id.into()));
+            conditions.push(format!("m.sender_id = ?{}", param_idx));
+            params.push(Value::Integer(from_id));
+            param_idx += 1;
         }
         if let Some(ref media_type) = p.media_type {
-            conditions.push("m.media_type = :media_type".to_string());
-            binds.push((":media_type".to_string(), media_type.clone().into()));
+            conditions.push(format!("m.media_type = ?{}", param_idx));
+            params.push(Value::Text(media_type.clone()));
+            param_idx += 1;
         }
-        for (i, ignore_id) in p.ignore_chats.iter().enumerate() {
-            let param = format!(":ignore_{}", i);
-            conditions.push(format!("m.chat_id != {}", param));
-            binds.push((param, (*ignore_id).into()));
+        
+        if !p.ignore_chats.is_empty() {
+            let ids: Vec<String> = p.ignore_chats.iter().map(|id| id.to_string()).collect();
+            conditions.push(format!("m.chat_id NOT IN ({})", ids.join(",")));
         }
         if p.ignore_channels {
             conditions.push("COALESCE(c.kind, '') != 'channel'".to_string());
@@ -484,23 +525,22 @@ impl Store {
             "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.reply_to_id
              FROM messages m
              LEFT JOIN chats c ON c.id = m.chat_id
-             WHERE {} ORDER BY m.ts DESC LIMIT :limit",
-            conditions.join(" AND ")
+             WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
+            conditions.join(" AND "),
+            param_idx
         );
-        binds.push((":limit".to_string(), p.limit.into()));
+        params.push(Value::Integer(p.limit));
 
-        let mut stmt = self.conn.prepare(&sql)?;
-        let bind_refs: Vec<(&str, Value)> = binds.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        stmt.bind::<&[(&str, Value)]>(&bind_refs)?;
+        let mut rows = self.conn.query(&sql, turso::params_from_iter(params)).await?;
 
         let mut msgs = Vec::new();
-        while let Ok(State::Row) = stmt.next() {
-            msgs.push(row_to_message(&stmt));
+        while let Some(row) = rows.next().await? {
+            msgs.push(row_to_message(&row)?);
         }
         Ok(msgs)
     }
 
-    pub fn message_context(
+    pub async fn message_context(
         &self,
         chat_id: i64,
         msg_id: i64,
@@ -508,64 +548,59 @@ impl Store {
         after: i64,
     ) -> Result<Vec<Message>> {
         // Get the target message timestamp
-        let mut ts_stmt = self
+        let mut ts_rows = self
             .conn
-            .prepare("SELECT ts FROM messages WHERE chat_id = :chat AND id = :id")?;
-        ts_stmt.bind::<&[(_, Value)]>(
-            &[(":chat", chat_id.into()), (":id", msg_id.into())][..],
-        )?;
-        if ts_stmt.next()? != State::Row {
-            anyhow::bail!("Message {}/{} not found", chat_id, msg_id);
-        }
-        let ts: String = ts_stmt.read("ts")?;
+            .query(
+                "SELECT ts FROM messages WHERE chat_id = ?1 AND id = ?2",
+                (chat_id, msg_id),
+            )
+            .await?;
+        let ts: String = match ts_rows.next().await? {
+            Some(row) => row.get(0)?,
+            None => anyhow::bail!("Message {}/{} not found", chat_id, msg_id),
+        };
 
         // Messages before
-        let mut before_stmt = self.conn.prepare(
-            "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
-             FROM messages WHERE chat_id = :chat AND ts < :ts ORDER BY ts DESC LIMIT :limit",
-        )?;
-        before_stmt.bind::<&[(_, Value)]>(
-            &[
-                (":chat", chat_id.into()),
-                (":ts", ts.clone().into()),
-                (":limit", before.into()),
-            ][..],
-        )?;
+        let mut before_rows = self
+            .conn
+            .query(
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                 FROM messages WHERE chat_id = ?1 AND ts < ?2 ORDER BY ts DESC LIMIT ?3",
+                (chat_id, ts.as_str(), before),
+            )
+            .await?;
         let mut before_msgs = Vec::new();
-        while let Ok(State::Row) = before_stmt.next() {
-            before_msgs.push(row_to_message(&before_stmt));
+        while let Some(row) = before_rows.next().await? {
+            before_msgs.push(row_to_message(&row)?);
         }
         before_msgs.reverse();
 
         // The target message
-        let mut target_stmt = self.conn.prepare(
-            "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
-             FROM messages WHERE chat_id = :chat AND id = :id",
-        )?;
-        target_stmt.bind::<&[(_, Value)]>(
-            &[(":chat", chat_id.into()), (":id", msg_id.into())][..],
-        )?;
-        let target = if let Ok(State::Row) = target_stmt.next() {
-            row_to_message(&target_stmt)
-        } else {
-            anyhow::bail!("Message not found");
+        let mut target_rows = self
+            .conn
+            .query(
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                 FROM messages WHERE chat_id = ?1 AND id = ?2",
+                (chat_id, msg_id),
+            )
+            .await?;
+        let target = match target_rows.next().await? {
+            Some(row) => row_to_message(&row)?,
+            None => anyhow::bail!("Message not found"),
         };
 
         // Messages after
-        let mut after_stmt = self.conn.prepare(
-            "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
-             FROM messages WHERE chat_id = :chat AND ts > :ts ORDER BY ts ASC LIMIT :limit",
-        )?;
-        after_stmt.bind::<&[(_, Value)]>(
-            &[
-                (":chat", chat_id.into()),
-                (":ts", ts.into()),
-                (":limit", after.into()),
-            ][..],
-        )?;
+        let mut after_rows = self
+            .conn
+            .query(
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                 FROM messages WHERE chat_id = ?1 AND ts > ?2 ORDER BY ts ASC LIMIT ?3",
+                (chat_id, ts.as_str(), after),
+            )
+            .await?;
         let mut after_msgs = Vec::new();
-        while let Ok(State::Row) = after_stmt.next() {
-            after_msgs.push(row_to_message(&after_stmt));
+        while let Some(row) = after_rows.next().await? {
+            after_msgs.push(row_to_message(&row)?);
         }
 
         let mut result = before_msgs;
@@ -574,16 +609,17 @@ impl Store {
         Ok(result)
     }
 
-    pub fn get_message(&self, chat_id: i64, msg_id: i64) -> Result<Option<Message>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
-             FROM messages WHERE chat_id = :chat AND id = :id",
-        )?;
-        stmt.bind::<&[(_, Value)]>(
-            &[(":chat", chat_id.into()), (":id", msg_id.into())][..],
-        )?;
-        if let Ok(State::Row) = stmt.next() {
-            Ok(Some(row_to_message(&stmt)))
+    pub async fn get_message(&self, chat_id: i64, msg_id: i64) -> Result<Option<Message>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id
+                 FROM messages WHERE chat_id = ?1 AND id = ?2",
+                (chat_id, msg_id),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row_to_message(&row)?))
         } else {
             Ok(None)
         }
@@ -596,48 +632,37 @@ fn parse_ts(s: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-fn row_to_chat(stmt: &sqlite::Statement) -> Chat {
-    Chat {
-        id: stmt.read::<i64, _>("id").unwrap_or(0),
-        kind: stmt.read::<String, _>("kind").unwrap_or_default(),
-        name: stmt.read::<String, _>("name").unwrap_or_default(),
-        username: stmt.read::<Option<String>, _>("username").unwrap_or(None),
-        last_message_ts: stmt
-            .read::<Option<String>, _>("last_message_ts")
-            .unwrap_or(None)
-            .map(|s| parse_ts(&s)),
-    }
+fn row_to_chat(row: &Row) -> Result<Chat> {
+    Ok(Chat {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        name: row.get(2)?,
+        username: row.get::<Option<String>>(3)?,
+        last_message_ts: row.get::<Option<String>>(4)?.map(|s| parse_ts(&s)),
+    })
 }
 
-fn row_to_contact(stmt: &sqlite::Statement) -> Contact {
-    Contact {
-        user_id: stmt.read::<i64, _>("user_id").unwrap_or(0),
-        username: stmt.read::<Option<String>, _>("username").unwrap_or(None),
-        first_name: stmt.read::<String, _>("first_name").unwrap_or_default(),
-        last_name: stmt.read::<String, _>("last_name").unwrap_or_default(),
-        phone: stmt.read::<String, _>("phone").unwrap_or_default(),
-    }
+fn row_to_contact(row: &Row) -> Result<Contact> {
+    Ok(Contact {
+        user_id: row.get(0)?,
+        username: row.get::<Option<String>>(1)?,
+        first_name: row.get(2)?,
+        last_name: row.get(3)?,
+        phone: row.get(4)?,
+    })
 }
 
-fn row_to_message(stmt: &sqlite::Statement) -> Message {
-    Message {
-        id: stmt.read::<i64, _>("id").unwrap_or(0),
-        chat_id: stmt.read::<i64, _>("chat_id").unwrap_or(0),
-        sender_id: stmt.read::<i64, _>("sender_id").unwrap_or(0),
-        ts: stmt
-            .read::<String, _>("ts")
-            .map(|s| parse_ts(&s))
-            .unwrap_or_else(|_| Utc::now()),
-        edit_ts: stmt
-            .read::<Option<String>, _>("edit_ts")
-            .unwrap_or(None)
-            .map(|s| parse_ts(&s)),
-        from_me: stmt.read::<i64, _>("from_me").unwrap_or(0) != 0,
-        text: stmt.read::<String, _>("text").unwrap_or_default(),
-        media_type: stmt.read::<Option<String>, _>("media_type").unwrap_or(None),
-        reply_to_id: stmt
-            .read::<Option<i64>, _>("reply_to_id")
-            .unwrap_or(None),
+fn row_to_message(row: &Row) -> Result<Message> {
+    Ok(Message {
+        id: row.get(0)?,
+        chat_id: row.get(1)?,
+        sender_id: row.get(2)?,
+        ts: row.get::<String>(3).map(|s| parse_ts(&s))?,
+        edit_ts: row.get::<Option<String>>(4)?.map(|s| parse_ts(&s)),
+        from_me: row.get::<i64>(5)? != 0,
+        text: row.get(6)?,
+        media_type: row.get::<Option<String>>(7)?,
+        reply_to_id: row.get::<Option<i64>>(8)?,
         snippet: String::new(),
-    }
+    })
 }
