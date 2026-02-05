@@ -56,6 +56,7 @@ fn encode_file_id(doc_id: i64, access_hash: i64, file_reference: &[u8]) -> Strin
 
 /// Decode a file_id string back to its components.
 /// Returns (doc_id, access_hash, file_reference)
+#[allow(dead_code)]
 pub fn decode_file_id(file_id: &str) -> Result<(i64, i64, Vec<u8>)> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     let parts: Vec<&str> = file_id.split(':').collect();

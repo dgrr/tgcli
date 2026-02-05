@@ -12,6 +12,9 @@ pub enum MessagesCommand {
         /// Chat ID
         #[arg(long)]
         chat: Option<i64>,
+        /// Topic ID (for forum groups)
+        #[arg(long)]
+        topic: Option<i32>,
         /// Limit results
         #[arg(long, default_value = "50")]
         limit: i64,
@@ -92,6 +95,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
     match cmd {
         MessagesCommand::List {
             chat,
+            topic,
             limit,
             after,
             before,
@@ -104,6 +108,7 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             let msgs = store
                 .list_messages(store::ListMessagesParams {
                     chat_id: *chat,
+                    topic_id: *topic,
                     limit: *limit,
                     after: after_ts,
                     before: before_ts,
@@ -118,8 +123,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 }))?;
             } else {
                 println!(
-                    "{:<20} {:<24} {:<18} {:<10} TEXT",
-                    "TIME", "CHAT", "FROM", "ID"
+                    "{:<20} {:<24} {:<18} {:<10} {:<8} TEXT",
+                    "TIME", "CHAT", "FROM", "ID", "TOPIC"
                 );
                 for m in &msgs {
                     let from = if m.from_me {
@@ -127,14 +132,19 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     } else {
                         m.sender_id.to_string()
                     };
-                    let text = out::truncate(&m.text, 80);
+                    let topic_str = m
+                        .topic_id
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let text = out::truncate(&m.text, 70);
                     let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
                     println!(
-                        "{:<20} {:<24} {:<18} {:<10} {}",
+                        "{:<20} {:<24} {:<18} {:<10} {:<8} {}",
                         ts,
                         out::truncate(&m.chat_id.to_string(), 22),
                         out::truncate(&from, 16),
                         m.id,
+                        topic_str,
                         text,
                     );
                 }
@@ -246,6 +256,9 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                             println!("From: me");
                         } else {
                             println!("From: {}", m.sender_id);
+                        }
+                        if let Some(topic_id) = m.topic_id {
+                            println!("Topic: {}", topic_id);
                         }
                         if let Some(ref mt) = m.media_type {
                             println!("Media: {}", mt);

@@ -43,12 +43,13 @@ impl App {
                 media_type: None,
                 media_path: None,
                 reply_to_id: None,
+                topic_id: None,
             })
             .await?;
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now))
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
             .await?;
 
         Ok(msg.id() as i64)
@@ -117,12 +118,13 @@ impl App {
                 media_type: Some("sticker".to_string()),
                 media_path: None,
                 reply_to_id: None,
+                topic_id: None,
             })
             .await?;
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now))
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
             .await?;
 
         Ok(msg.id() as i64)

@@ -6,6 +6,7 @@ pub mod read;
 pub mod send;
 pub mod stickers;
 pub mod sync;
+pub mod topics;
 pub mod version;
 
 use crate::Cli;
@@ -41,6 +42,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: stickers::StickersCommand,
     },
+    /// List and show forum topics
+    Topics {
+        #[command(subcommand)]
+        cmd: topics::TopicsCommand,
+    },
     /// Show version info
     Version,
 }
@@ -55,6 +61,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Contacts { cmd } => contacts::run(&cli, cmd).await,
         Command::Read(args) => read::run(&cli, args).await,
         Command::Stickers { cmd } => stickers::run(&cli, cmd).await,
+        Command::Topics { cmd } => topics::run(&cli, cmd).await,
         Command::Version => {
             version::run(&cli);
             Ok(())

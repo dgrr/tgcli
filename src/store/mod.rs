@@ -16,6 +16,17 @@ pub struct Chat {
     pub name: String,
     pub username: Option<String>,
     pub last_message_ts: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub is_forum: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Topic {
+    pub chat_id: i64,
+    pub topic_id: i32,
+    pub name: String,
+    pub icon_color: i32,
+    pub icon_emoji: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,12 +50,14 @@ pub struct Message {
     pub media_type: Option<String>,
     pub media_path: Option<String>,
     pub reply_to_id: Option<i64>,
+    pub topic_id: Option<i32>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub snippet: String,
 }
 
 pub struct ListMessagesParams {
     pub chat_id: Option<i64>,
+    pub topic_id: Option<i32>,
     pub limit: i64,
     pub after: Option<DateTime<Utc>>,
     pub before: Option<DateTime<Utc>>,
@@ -73,6 +86,7 @@ pub struct UpsertMessageParams {
     pub media_type: Option<String>,
     pub media_path: Option<String>,
     pub reply_to_id: Option<i64>,
+    pub topic_id: Option<i32>,
 }
 
 impl Store {
@@ -107,7 +121,8 @@ impl Store {
                     kind TEXT NOT NULL DEFAULT 'user',
                     name TEXT NOT NULL DEFAULT '',
                     username TEXT,
-                    last_message_ts TEXT
+                    last_message_ts TEXT,
+                    is_forum INTEGER NOT NULL DEFAULT 0
                 )",
                 (),
             )
@@ -141,6 +156,7 @@ impl Store {
                     media_type TEXT,
                     media_path TEXT,
                     reply_to_id INTEGER,
+                    topic_id INTEGER,
                     PRIMARY KEY (chat_id, id)
                 )",
                 (),
@@ -148,10 +164,41 @@ impl Store {
             .await
             .context("Failed to create messages table")?;
 
+        // Create topics table for forum groups
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS topics (
+                    chat_id INTEGER NOT NULL,
+                    topic_id INTEGER NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    icon_color INTEGER NOT NULL DEFAULT 0,
+                    icon_emoji TEXT,
+                    PRIMARY KEY (chat_id, topic_id)
+                )",
+                (),
+            )
+            .await
+            .context("Failed to create topics table")?;
+
         // Add media_path column if it doesn't exist (migration for existing DBs)
         let _ = self
             .conn
             .execute("ALTER TABLE messages ADD COLUMN media_path TEXT", ())
+            .await;
+
+        // Add is_forum column if it doesn't exist (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE chats ADD COLUMN is_forum INTEGER NOT NULL DEFAULT 0",
+                (),
+            )
+            .await;
+
+        // Add topic_id column if it doesn't exist (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER", ())
             .await;
 
         self.conn
@@ -246,19 +293,22 @@ impl Store {
         name: &str,
         username: Option<&str>,
         last_message_ts: Option<DateTime<Utc>>,
+        is_forum: bool,
     ) -> Result<()> {
         let ts_str = last_message_ts.map(|t| t.to_rfc3339());
+        let is_forum_int = is_forum as i64;
         self.conn
             .execute(
-                "INSERT INTO chats (id, kind, name, username, last_message_ts)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(id) DO UPDATE SET
                     kind = COALESCE(excluded.kind, kind),
                     name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
                     username = COALESCE(excluded.username, username),
                     last_message_ts = CASE WHEN excluded.last_message_ts IS NOT NULL AND (excluded.last_message_ts > last_message_ts OR last_message_ts IS NULL)
-                        THEN excluded.last_message_ts ELSE last_message_ts END",
-                (id, kind, name, username, ts_str),
+                        THEN excluded.last_message_ts ELSE last_message_ts END,
+                    is_forum = CASE WHEN excluded.is_forum = 1 THEN 1 ELSE is_forum END",
+                (id, kind, name, username, ts_str, is_forum_int),
             )
             .await?;
         Ok(())
@@ -272,7 +322,7 @@ impl Store {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, kind, name, username, last_message_ts FROM chats
+                    "SELECT id, kind, name, username, last_message_ts, is_forum FROM chats
                      WHERE name LIKE ?1 OR username LIKE ?1
                      ORDER BY last_message_ts DESC LIMIT ?2",
                     (pattern.as_str(), limit),
@@ -285,7 +335,7 @@ impl Store {
             let mut rows = self
                 .conn
                 .query(
-                    "SELECT id, kind, name, username, last_message_ts FROM chats
+                    "SELECT id, kind, name, username, last_message_ts, is_forum FROM chats
                      ORDER BY last_message_ts DESC LIMIT ?1",
                     [limit],
                 )
@@ -301,7 +351,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, kind, name, username, last_message_ts FROM chats WHERE id = ?1",
+                "SELECT id, kind, name, username, last_message_ts, is_forum FROM chats WHERE id = ?1",
                 [id],
             )
             .await?;
@@ -328,6 +378,62 @@ impl Store {
             .execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id])
             .await?;
         Ok(affected)
+    }
+
+    // --- Topics ---
+
+    pub async fn upsert_topic(
+        &self,
+        chat_id: i64,
+        topic_id: i32,
+        name: &str,
+        icon_color: i32,
+        icon_emoji: Option<&str>,
+    ) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO topics (chat_id, topic_id, name, icon_color, icon_emoji)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(chat_id, topic_id) DO UPDATE SET
+                    name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
+                    icon_color = excluded.icon_color,
+                    icon_emoji = COALESCE(excluded.icon_emoji, icon_emoji)",
+                (chat_id, topic_id, name, icon_color, icon_emoji),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_topics(&self, chat_id: i64) -> Result<Vec<Topic>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT chat_id, topic_id, name, icon_color, icon_emoji FROM topics
+                 WHERE chat_id = ?1 ORDER BY topic_id",
+                [chat_id],
+            )
+            .await?;
+        let mut topics = Vec::new();
+        while let Some(row) = rows.next().await? {
+            topics.push(row_to_topic(&row)?);
+        }
+        Ok(topics)
+    }
+
+    pub async fn get_topic(&self, chat_id: i64, topic_id: i32) -> Result<Option<Topic>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT chat_id, topic_id, name, icon_color, icon_emoji FROM topics
+                 WHERE chat_id = ?1 AND topic_id = ?2",
+                (chat_id, topic_id),
+            )
+            .await?;
+        if let Some(row) = rows.next().await? {
+            Ok(Some(row_to_topic(&row)?))
+        } else {
+            Ok(None)
+        }
     }
 
     // --- Contacts ---
@@ -397,8 +503,8 @@ impl Store {
 
         self.conn
             .execute(
-                "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(chat_id, id) DO UPDATE SET
                     sender_id = excluded.sender_id,
                     ts = excluded.ts,
@@ -407,7 +513,8 @@ impl Store {
                     text = CASE WHEN excluded.text != '' THEN excluded.text ELSE text END,
                     media_type = COALESCE(excluded.media_type, media_type),
                     media_path = COALESCE(excluded.media_path, media_path),
-                    reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id)",
+                    reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
+                    topic_id = COALESCE(excluded.topic_id, topic_id)",
                 (
                     p.id,
                     p.chat_id,
@@ -419,6 +526,7 @@ impl Store {
                     p.media_type.as_deref(),
                     p.media_path.as_deref(),
                     p.reply_to_id,
+                    p.topic_id,
                 ),
             )
             .await?;
@@ -440,6 +548,15 @@ impl Store {
             cond
         });
         if let Some(c) = &chat_filter {
+            conditions.push(c.clone());
+        }
+
+        let topic_filter = p.topic_id.map(|_| {
+            let cond = format!("m.topic_id = ?{}", param_idx);
+            param_idx += 1;
+            cond
+        });
+        if let Some(c) = &topic_filter {
             conditions.push(c.clone());
         }
 
@@ -475,7 +592,7 @@ impl Store {
         let limit_param_idx = param_idx;
 
         let sql = format!(
-            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id, m.topic_id
              FROM messages m
              LEFT JOIN chats c ON c.id = m.chat_id
              WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
@@ -490,6 +607,9 @@ impl Store {
 
         if let Some(chat_id) = p.chat_id {
             params.push(Value::Integer(chat_id));
+        }
+        if let Some(topic_id) = p.topic_id {
+            params.push(Value::Integer(topic_id as i64));
         }
         if let Some(ref after) = p.after {
             params.push(Value::Text(after.to_rfc3339()));
@@ -552,7 +672,7 @@ impl Store {
         }
 
         let sql = format!(
-            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id,
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id, m.topic_id,
                     snippet(messages_fts, 0, '»', '«', '…', 40) as snippet
              FROM messages m
              JOIN messages_fts ON messages_fts.rowid = m.rowid
@@ -571,7 +691,7 @@ impl Store {
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
             let mut m = row_to_message(&row)?;
-            m.snippet = row.get::<String>(10).unwrap_or_default();
+            m.snippet = row.get::<String>(11).unwrap_or_default();
             msgs.push(m);
         }
         Ok(msgs)
@@ -610,7 +730,7 @@ impl Store {
         }
 
         let sql = format!(
-            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id
+            "SELECT m.id, m.chat_id, m.sender_id, m.ts, m.edit_ts, m.from_me, m.text, m.media_type, m.media_path, m.reply_to_id, m.topic_id
              FROM messages m
              LEFT JOIN chats c ON c.id = m.chat_id
              WHERE {} ORDER BY m.ts DESC LIMIT ?{}",
@@ -655,7 +775,7 @@ impl Store {
         let mut before_rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
                  FROM messages WHERE chat_id = ?1 AND ts < ?2 ORDER BY ts DESC LIMIT ?3",
                 (chat_id, ts.as_str(), before),
             )
@@ -670,7 +790,7 @@ impl Store {
         let mut target_rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
                  FROM messages WHERE chat_id = ?1 AND id = ?2",
                 (chat_id, msg_id),
             )
@@ -684,7 +804,7 @@ impl Store {
         let mut after_rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
                  FROM messages WHERE chat_id = ?1 AND ts > ?2 ORDER BY ts ASC LIMIT ?3",
                 (chat_id, ts.as_str(), after),
             )
@@ -704,7 +824,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id
+                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
                  FROM messages WHERE chat_id = ?1 AND id = ?2",
                 (chat_id, msg_id),
             )
@@ -730,6 +850,7 @@ fn row_to_chat(row: &Row) -> Result<Chat> {
         name: row.get(2)?,
         username: row.get::<Option<String>>(3)?,
         last_message_ts: row.get::<Option<String>>(4)?.map(|s| parse_ts(&s)),
+        is_forum: row.get::<i64>(5).unwrap_or(0) != 0,
     })
 }
 
@@ -740,6 +861,16 @@ fn row_to_contact(row: &Row) -> Result<Contact> {
         first_name: row.get(2)?,
         last_name: row.get(3)?,
         phone: row.get(4)?,
+    })
+}
+
+fn row_to_topic(row: &Row) -> Result<Topic> {
+    Ok(Topic {
+        chat_id: row.get(0)?,
+        topic_id: row.get(1)?,
+        name: row.get(2)?,
+        icon_color: row.get(3)?,
+        icon_emoji: row.get::<Option<String>>(4)?,
     })
 }
 
@@ -755,6 +886,7 @@ fn row_to_message(row: &Row) -> Result<Message> {
         media_type: row.get::<Option<String>>(7)?,
         media_path: row.get::<Option<String>>(8)?,
         reply_to_id: row.get::<Option<i64>>(9)?,
+        topic_id: row.get::<Option<i32>>(10).ok().flatten(),
         snippet: String::new(),
     })
 }

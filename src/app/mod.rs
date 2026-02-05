@@ -6,7 +6,9 @@ use crate::store::Store;
 use crate::tg::TgClient;
 use crate::Cli;
 use anyhow::Result;
+use grammers_session::defs::PeerRef;
 use grammers_session::updates::UpdatesLike;
+use grammers_tl_types as tl;
 use tokio::sync::mpsc;
 
 pub struct App {
@@ -60,5 +62,69 @@ impl App {
             json: cli.json,
             updates_rx: Some(updates_rx),
         })
+    }
+
+    /// Sync forum topics from Telegram for a given chat.
+    /// Returns the number of topics synced.
+    pub async fn sync_topics(&self, chat_id: i64) -> Result<usize> {
+        // Resolve peer via dialogs
+        let peer_ref = self.resolve_peer_ref_for_topics(chat_id).await?;
+
+        // Convert to InputPeer for the API call
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        // Fetch topics using raw TL function
+        let request = tl::functions::messages::GetForumTopics {
+            peer: input_peer,
+            q: None,
+            offset_date: 0,
+            offset_id: 0,
+            offset_topic: 0,
+            limit: 100,
+        };
+
+        let result = self.tg.client.invoke(&request).await?;
+
+        let topics = match result {
+            tl::enums::messages::ForumTopics::Topics(t) => t.topics,
+        };
+
+        let mut count = 0;
+        for topic_enum in topics {
+            match topic_enum {
+                tl::enums::ForumTopic::Topic(topic) => {
+                    // Convert icon_emoji_id to string representation if present
+                    let icon_emoji = topic.icon_emoji_id.map(|id| id.to_string());
+
+                    self.store
+                        .upsert_topic(
+                            chat_id,
+                            topic.id,
+                            &topic.title,
+                            topic.icon_color,
+                            icon_emoji.as_deref(),
+                        )
+                        .await?;
+                    count += 1;
+                }
+                tl::enums::ForumTopic::Deleted(_) => {
+                    // Skip deleted topics
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Resolve a chat ID to a PeerRef for topics API.
+    async fn resolve_peer_ref_for_topics(&self, chat_id: i64) -> Result<PeerRef> {
+        let mut dialogs = self.tg.client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await? {
+            let peer = dialog.peer();
+            if peer.id().bare_id() == chat_id {
+                return Ok(PeerRef::from(peer));
+            }
+        }
+        anyhow::bail!("Chat {} not found. Make sure you've synced first.", chat_id);
     }
 }

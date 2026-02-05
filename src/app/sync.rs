@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use grammers_client::types::{Media, Message as TgMessage, Peer, Update};
 use grammers_client::UpdatesConfiguration;
 use grammers_session::defs::PeerRef;
+use grammers_tl_types as tl;
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
@@ -212,7 +213,7 @@ impl App {
         let mut dialogs = client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
-            let (kind, name, username) = peer_info(peer);
+            let (kind, name, username, is_forum) = peer_info(peer);
             let id = peer.id().bare_id();
 
             // Skip ignored chats.
@@ -221,7 +222,7 @@ impl App {
             }
 
             self.store
-                .upsert_chat(id, &kind, &name, username.as_deref(), None)
+                .upsert_chat(id, &kind, &name, username.as_deref(), None, is_forum)
                 .await?;
             chats_stored += 1;
 
@@ -260,6 +261,11 @@ impl App {
 
                 let text = msg.text().to_string();
                 let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+                let topic_id = if is_forum {
+                    extract_topic_id(&msg)
+                } else {
+                    None
+                };
 
                 // Download media if enabled
                 let (media_type, media_path) = if opts.download_media {
@@ -280,6 +286,7 @@ impl App {
                         media_type,
                         media_path,
                         reply_to_id,
+                        topic_id,
                     })
                     .await?;
                 messages_stored += 1;
@@ -331,8 +338,15 @@ impl App {
             // Update chat's last_message_ts
             if let Some(ts) = latest_ts {
                 self.store
-                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts))
+                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts), is_forum)
                     .await?;
+            }
+
+            // If it's a forum, sync topics
+            if is_forum {
+                if let Ok(topic_count) = self.sync_topics(id).await {
+                    log::info!("Synced {} topics for forum chat {}", topic_count, id);
+                }
             }
         }
 
@@ -374,9 +388,11 @@ impl App {
                             match update {
                                 Update::NewMessage(msg) if !msg.outgoing() => {
                                     let chat_peer = msg.peer();
-                                    let (kind, name, username) = match &chat_peer {
+                                    let (kind, name, username, is_forum) = match &chat_peer {
                                         Ok(p) => peer_info(p),
-                                        Err(_) => ("unknown".to_string(), "".to_string(), None),
+                                        Err(_) => {
+                                            ("unknown".to_string(), "".to_string(), None, false)
+                                        }
                                     };
                                     let chat_id = msg.peer_id().bare_id();
 
@@ -389,6 +405,11 @@ impl App {
                                         msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
                                     let msg_ts = msg.date();
                                     let text = msg.text().to_string();
+                                    let topic_id = if is_forum {
+                                        extract_topic_id(&msg)
+                                    } else {
+                                        None
+                                    };
 
                                     // Download media if enabled
                                     let (media_type, media_path) = if opts.download_media {
@@ -404,6 +425,7 @@ impl App {
                                             &name,
                                             username.as_deref(),
                                             Some(msg_ts),
+                                            is_forum,
                                         )
                                         .await?;
 
@@ -421,6 +443,7 @@ impl App {
                                             reply_to_id: msg
                                                 .reply_to_message_id()
                                                 .map(|id| id as i64),
+                                            topic_id,
                                         })
                                         .await?;
                                     messages_stored += 1;
@@ -466,9 +489,11 @@ impl App {
                                 }
                                 Update::NewMessage(msg) if msg.outgoing() => {
                                     let chat_id = msg.peer_id().bare_id();
-                                    let (kind, _, _) = match msg.peer() {
+                                    let (kind, _, _, is_forum) = match msg.peer() {
                                         Ok(p) => peer_info(p),
-                                        Err(_) => ("unknown".to_string(), "".to_string(), None),
+                                        Err(_) => {
+                                            ("unknown".to_string(), "".to_string(), None, false)
+                                        }
                                     };
 
                                     // Skip ignored chats.
@@ -477,6 +502,11 @@ impl App {
                                     }
 
                                     let msg_ts = msg.date();
+                                    let topic_id = if is_forum {
+                                        extract_topic_id(&msg)
+                                    } else {
+                                        None
+                                    };
 
                                     // Download media if enabled
                                     let (media_type, media_path) = if opts.download_media {
@@ -499,15 +529,18 @@ impl App {
                                             reply_to_id: msg
                                                 .reply_to_message_id()
                                                 .map(|id| id as i64),
+                                            topic_id,
                                         })
                                         .await?;
                                     messages_stored += 1;
                                 }
                                 Update::MessageEdited(msg) => {
                                     let chat_id = msg.peer_id().bare_id();
-                                    let (kind, _, _) = match msg.peer() {
+                                    let (kind, _, _, is_forum) = match msg.peer() {
                                         Ok(p) => peer_info(p),
-                                        Err(_) => ("unknown".to_string(), "".to_string(), None),
+                                        Err(_) => {
+                                            ("unknown".to_string(), "".to_string(), None, false)
+                                        }
                                     };
 
                                     // Skip ignored chats.
@@ -516,6 +549,11 @@ impl App {
                                     }
 
                                     let msg_ts = msg.date();
+                                    let topic_id = if is_forum {
+                                        extract_topic_id(&msg)
+                                    } else {
+                                        None
+                                    };
 
                                     // Download media if enabled (edits might add media)
                                     let (media_type, media_path) = if opts.download_media {
@@ -541,6 +579,7 @@ impl App {
                                             reply_to_id: msg
                                                 .reply_to_message_id()
                                                 .map(|id| id as i64),
+                                            topic_id,
                                         })
                                         .await?;
                                 }
@@ -572,22 +611,49 @@ impl App {
     }
 }
 
-fn peer_info(peer: &Peer) -> (String, String, Option<String>) {
+/// Returns (kind, name, username, is_forum)
+fn peer_info(peer: &Peer) -> (String, String, Option<String>, bool) {
     match peer {
         Peer::User(user) => {
             let name = user.full_name();
             let username = user.username().map(|s| s.to_string());
-            ("user".to_string(), name, username)
+            ("user".to_string(), name, username, false)
         }
         Peer::Group(group) => {
             let name = group.title().map(|s| s.to_string()).unwrap_or_default();
             let username = group.username().map(|s| s.to_string());
-            ("group".to_string(), name, username)
+            // Check if this is a forum group (megagroup with forum flag)
+            let is_forum = match &group.raw {
+                tl::enums::Chat::Channel(channel) => channel.forum,
+                _ => false,
+            };
+            ("group".to_string(), name, username, is_forum)
         }
         Peer::Channel(channel) => {
             let name = channel.title().to_string();
             let username = channel.username().map(|s| s.to_string());
-            ("channel".to_string(), name, username)
+            ("channel".to_string(), name, username, false)
         }
+    }
+}
+
+/// Extract topic_id from a message's reply header if it's a forum topic message
+fn extract_topic_id(msg: &TgMessage) -> Option<i32> {
+    match &msg.raw {
+        tl::enums::Message::Message(m) => {
+            if let Some(tl::enums::MessageReplyHeader::Header(header)) = &m.reply_to {
+                // reply_to_top_id is the topic ID for forum messages
+                // If it's a top-level message in a topic, reply_to_msg_id itself is the topic ID
+                if header.forum_topic {
+                    // For forum topics, reply_to_top_id or reply_to_msg_id indicates the topic
+                    header.reply_to_top_id.or(header.reply_to_msg_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }

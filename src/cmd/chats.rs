@@ -96,14 +96,19 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             if cli.json {
                 out::write_json(&chats)?;
             } else {
-                println!("{:<6} {:<30} {:<16} LAST MESSAGE", "KIND", "NAME", "ID");
+                println!("{:<12} {:<30} {:<16} LAST MESSAGE", "KIND", "NAME", "ID");
                 for c in &chats {
                     let name = out::truncate(&c.name, 28);
                     let ts = c
                         .last_message_ts
                         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_default();
-                    println!("{:<6} {:<30} {:<16} {}", c.kind, name, c.id, ts);
+                    let kind_display = if c.is_forum {
+                        format!("{}[forum]", c.kind)
+                    } else {
+                        c.kind.clone()
+                    };
+                    println!("{:<12} {:<30} {:<16} {}", kind_display, name, c.id, ts);
                 }
             }
         }
@@ -119,6 +124,9 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                         println!("Name: {}", c.name);
                         if let Some(u) = &c.username {
                             println!("Username: @{}", u);
+                        }
+                        if c.is_forum {
+                            println!("Forum: yes");
                         }
                         if let Some(ts) = c.last_message_ts {
                             println!("Last message: {}", ts.to_rfc3339());
