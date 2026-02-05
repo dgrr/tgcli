@@ -5,6 +5,8 @@ use std::path::Path;
 use turso::{Builder, Connection, Database, Row};
 
 pub struct Store {
+    #[allow(dead_code)]
+    db: Database, // Must keep Database alive - dropping it invalidates the connection
     conn: Connection,
     has_fts: bool,
 }
@@ -106,6 +108,7 @@ impl Store {
         let _ = conn.query("PRAGMA busy_timeout=5000", ()).await;
 
         let mut store = Store {
+            db,
             conn,
             has_fts: false,
         };
@@ -123,7 +126,7 @@ impl Store {
                     name TEXT NOT NULL DEFAULT '',
                     username TEXT,
                     last_message_ts TEXT,
-                    is_forum INTEGER NOT NULL DEFAULT 0
+                    is_forum INTEGER DEFAULT 0
                 )",
                 (),
             )
@@ -191,9 +194,15 @@ impl Store {
         let _ = self
             .conn
             .execute(
-                "ALTER TABLE chats ADD COLUMN is_forum INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE chats ADD COLUMN is_forum INTEGER DEFAULT 0",
                 (),
             )
+            .await;
+
+        // Ensure any NULL is_forum values are set to 0 (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute("UPDATE chats SET is_forum = 0 WHERE is_forum IS NULL", ())
             .await;
 
         // Add topic_id column if it doesn't exist (migration for existing DBs)
