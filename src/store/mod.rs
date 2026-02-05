@@ -244,11 +244,11 @@ impl Store {
                 "INSERT INTO chats (id, kind, name, username, last_message_ts)
                  VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(id) DO UPDATE SET
-                    kind = COALESCE(?2, kind),
-                    name = CASE WHEN ?3 != '' THEN ?3 ELSE name END,
-                    username = COALESCE(?4, username),
-                    last_message_ts = CASE WHEN ?5 IS NOT NULL AND (?5 > last_message_ts OR last_message_ts IS NULL)
-                        THEN ?5 ELSE last_message_ts END",
+                    kind = COALESCE(excluded.kind, kind),
+                    name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
+                    username = COALESCE(excluded.username, username),
+                    last_message_ts = CASE WHEN excluded.last_message_ts IS NOT NULL AND (excluded.last_message_ts > last_message_ts OR last_message_ts IS NULL)
+                        THEN excluded.last_message_ts ELSE last_message_ts END",
                 (id, kind, name, username, ts_str),
             )
             .await?;
@@ -318,10 +318,10 @@ impl Store {
                 "INSERT INTO contacts (user_id, username, first_name, last_name, phone)
                  VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(user_id) DO UPDATE SET
-                    username = COALESCE(?2, username),
-                    first_name = CASE WHEN ?3 != '' THEN ?3 ELSE first_name END,
-                    last_name = CASE WHEN ?4 != '' THEN ?4 ELSE last_name END,
-                    phone = CASE WHEN ?5 != '' THEN ?5 ELSE phone END",
+                    username = COALESCE(excluded.username, username),
+                    first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE first_name END,
+                    last_name = CASE WHEN excluded.last_name != '' THEN excluded.last_name ELSE last_name END,
+                    phone = CASE WHEN excluded.phone != '' THEN excluded.phone ELSE phone END",
                 (user_id, username, first_name, last_name, phone),
             )
             .await?;
@@ -373,13 +373,13 @@ impl Store {
                 "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, reply_to_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(chat_id, id) DO UPDATE SET
-                    sender_id = ?3,
-                    ts = ?4,
-                    edit_ts = COALESCE(?5, edit_ts),
-                    from_me = ?6,
-                    text = CASE WHEN ?7 != '' THEN ?7 ELSE text END,
-                    media_type = COALESCE(?8, media_type),
-                    reply_to_id = COALESCE(?9, reply_to_id)",
+                    sender_id = excluded.sender_id,
+                    ts = excluded.ts,
+                    edit_ts = COALESCE(excluded.edit_ts, edit_ts),
+                    from_me = excluded.from_me,
+                    text = CASE WHEN excluded.text != '' THEN excluded.text ELSE text END,
+                    media_type = COALESCE(excluded.media_type, media_type),
+                    reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id)",
                 (
                     p.id,
                     p.chat_id,
