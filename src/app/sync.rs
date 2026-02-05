@@ -2,13 +2,19 @@ use crate::app::App;
 use crate::store::UpsertMessageParams;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use futures::stream::{self, StreamExt};
 use grammers_client::types::{Media, Message as TgMessage, Peer};
+use grammers_client::Client;
 use grammers_session::defs::{PeerAuth, PeerId, PeerRef};
+use grammers_session::storages::SqliteSession;
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 /// Maximum messages to fetch per chat during incremental sync (effectively unlimited).
 const INCREMENTAL_MAX_MESSAGES: usize = 10000;
@@ -32,6 +38,7 @@ pub struct SyncOptions {
     pub show_progress: bool,
     pub incremental: bool,
     pub messages_per_chat: usize,
+    pub concurrency: usize,
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -141,6 +148,35 @@ pub struct SyncResult {
     pub messages_stored: u64,
     pub chats_stored: u64,
     pub per_chat: Vec<ChatSyncSummary>,
+}
+
+/// Result from syncing a single chat (used for concurrent processing)
+struct ChatSyncTaskResult {
+    chat_id: i64,
+    chat_name: String,
+    chat_kind: String,
+    chat_username: Option<String>,
+    is_forum: bool,
+    access_hash: Option<i64>,
+    messages: Vec<FetchedMessage>,
+    highest_msg_id: Option<i64>,
+    latest_ts: Option<DateTime<Utc>>,
+    topic_counts: std::collections::HashMap<i32, u64>,
+    error: Option<String>,
+}
+
+/// A fetched message ready to be stored
+struct FetchedMessage {
+    id: i64,
+    sender_id: i64,
+    ts: DateTime<Utc>,
+    edit_ts: Option<DateTime<Utc>>,
+    from_me: bool,
+    text: String,
+    media_type: Option<String>,
+    media_path: Option<String>,
+    reply_to_id: Option<i64>,
+    topic_id: Option<i32>,
 }
 
 impl App {
@@ -448,171 +484,276 @@ impl App {
     /// Sync only messages from existing local chats (uses stored access_hash).
     /// This does NOT fetch dialogs from Telegram - it only syncs messages for chats
     /// that already exist in the local database with checkpoints.
+    /// Uses concurrent fetching with semaphore-based rate limiting.
     pub async fn sync_msgs(&mut self, opts: SyncOptions) -> Result<SyncResult> {
+        // Build ignore set for fast lookup.
+        let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
+        let ignore_channels = opts.ignore_channels;
+
+        // Get all chats that have sync checkpoints
+        let all_chats = self.store.list_chats_with_checkpoint().await?;
+
+        // Filter chats to process
+        let chats_to_sync: Vec<_> = all_chats
+            .into_iter()
+            .filter(|chat| {
+                if ignore_set.contains(&chat.id) {
+                    return false;
+                }
+                if ignore_channels && chat.kind == "channel" {
+                    return false;
+                }
+                // Must have peer info to sync
+                self.resolve_peer_from_session(chat.id, &chat.kind, chat.access_hash)
+                    .is_some()
+            })
+            .collect();
+
+        let total_chats = chats_to_sync.len();
+        if total_chats == 0 {
+            if opts.show_progress {
+                eprintln!("Messages sync complete: 0 chats to sync");
+            }
+            return Ok(SyncResult {
+                messages_stored: 0,
+                chats_stored: 0,
+                per_chat: Vec::new(),
+            });
+        }
+
+        // Progress tracking with atomics for thread-safety
+        let chats_done = Arc::new(AtomicU64::new(0));
+        let messages_fetched = Arc::new(AtomicU64::new(0));
+
+        // Semaphore for concurrency control
+        let concurrency = opts.concurrency.max(1);
+        let semaphore = Arc::new(Semaphore::new(concurrency));
+
+        // Clone client for use in tasks (grammers Client is Clone)
+        let client = self.tg.client.clone();
+
+        // Session for peer resolution
+        let session = self.tg.session.clone();
+
+        // Store dir for media paths (if download enabled later)
+        let store_dir = self.store_dir.clone();
+        let download_media = opts.download_media;
+
+        // Progress output task
+        let show_progress = opts.show_progress;
+        let chats_done_progress = chats_done.clone();
+        let messages_fetched_progress = messages_fetched.clone();
+
+        // Spawn progress reporter if needed
+        let progress_handle = if show_progress {
+            let total = total_chats;
+            Some(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(500));
+                loop {
+                    interval.tick().await;
+                    let done = chats_done_progress.load(Ordering::Relaxed);
+                    let msgs = messages_fetched_progress.load(Ordering::Relaxed);
+                    eprint!(
+                        "\rSyncing messages... {}/{} chats, {} messages",
+                        done, total, msgs
+                    );
+                    if done >= total as u64 {
+                        break;
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
+        // Create concurrent stream of chat sync tasks
+        let results: Vec<ChatSyncTaskResult> = stream::iter(chats_to_sync)
+            .map(|chat| {
+                let sem = semaphore.clone();
+                let client = client.clone();
+                let session = session.clone();
+                let store_dir = store_dir.clone();
+                let chats_done = chats_done.clone();
+                let messages_fetched = messages_fetched.clone();
+
+                async move {
+                    let _permit = sem.acquire().await.unwrap();
+
+                    // Resolve peer
+                    let peer_ref = resolve_peer_from_session_static(
+                        &session,
+                        chat.id,
+                        &chat.kind,
+                        chat.access_hash,
+                    );
+
+                    let peer_ref = match peer_ref {
+                        Some(p) => p,
+                        None => {
+                            chats_done.fetch_add(1, Ordering::Relaxed);
+                            return ChatSyncTaskResult {
+                                chat_id: chat.id,
+                                chat_name: chat.name.clone(),
+                                chat_kind: chat.kind.clone(),
+                                chat_username: chat.username.clone(),
+                                is_forum: chat.is_forum,
+                                access_hash: chat.access_hash,
+                                messages: Vec::new(),
+                                highest_msg_id: None,
+                                latest_ts: None,
+                                topic_counts: std::collections::HashMap::new(),
+                                error: Some("No peer ref available".to_string()),
+                            };
+                        }
+                    };
+
+                    // Fetch messages
+                    let last_sync_id = chat.last_sync_message_id;
+                    let mut message_iter = client.iter_messages(peer_ref);
+                    let mut messages = Vec::new();
+                    let mut highest_msg_id: Option<i64> = None;
+                    let mut latest_ts: Option<DateTime<Utc>> = None;
+                    let mut topic_counts: std::collections::HashMap<i32, u64> =
+                        std::collections::HashMap::new();
+                    let mut error: Option<String> = None;
+
+                    loop {
+                        match message_iter.next().await {
+                            Ok(Some(msg)) => {
+                                let msg_id = msg.id() as i64;
+
+                                // Stop when we hit a message we've already seen
+                                if let Some(last_id) = last_sync_id {
+                                    if msg_id <= last_id {
+                                        break;
+                                    }
+                                }
+
+                                if messages.len() >= INCREMENTAL_MAX_MESSAGES {
+                                    break;
+                                }
+
+                                // Track highest message ID
+                                if highest_msg_id.is_none() || msg_id > highest_msg_id.unwrap() {
+                                    highest_msg_id = Some(msg_id);
+                                }
+
+                                let msg_ts = msg.date();
+                                if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
+                                    latest_ts = Some(msg_ts);
+                                }
+
+                                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                                let from_me = msg.outgoing();
+                                let text = msg.text().to_string();
+                                let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+                                let topic_id = if chat.is_forum {
+                                    extract_topic_id(&msg)
+                                } else {
+                                    None
+                                };
+
+                                // Track per-topic counts
+                                if let Some(tid) = topic_id {
+                                    *topic_counts.entry(tid).or_insert(0) += 1;
+                                }
+
+                                // Handle media
+                                let (media_type, media_path) = if download_media {
+                                    download_message_media_static(
+                                        &client, &msg, chat.id, &store_dir,
+                                    )
+                                    .await
+                                    .unwrap_or((None, None))
+                                } else {
+                                    (msg.media().map(|_| "media".to_string()), None)
+                                };
+
+                                messages.push(FetchedMessage {
+                                    id: msg_id,
+                                    sender_id,
+                                    ts: msg_ts,
+                                    edit_ts: msg.edit_date(),
+                                    from_me,
+                                    text,
+                                    media_type,
+                                    media_path,
+                                    reply_to_id,
+                                    topic_id,
+                                });
+
+                                messages_fetched.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                error = Some(format!(
+                                    "Failed to fetch messages for chat {} ({}): {}",
+                                    chat.name, chat.id, e
+                                ));
+                                break;
+                            }
+                        }
+                    }
+
+                    chats_done.fetch_add(1, Ordering::Relaxed);
+
+                    ChatSyncTaskResult {
+                        chat_id: chat.id,
+                        chat_name: chat.name.clone(),
+                        chat_kind: chat.kind.clone(),
+                        chat_username: chat.username.clone(),
+                        is_forum: chat.is_forum,
+                        access_hash: chat.access_hash,
+                        messages,
+                        highest_msg_id,
+                        latest_ts,
+                        topic_counts,
+                        error,
+                    }
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        // Stop progress reporter
+        if let Some(handle) = progress_handle {
+            handle.abort();
+        }
+
+        if show_progress {
+            eprint!("\r\x1b[K"); // Clear line
+        }
+
+        // Now process results and write to store
         let mut messages_stored: u64 = 0;
         let mut chats_processed: u64 = 0;
         let mut per_chat_map: std::collections::HashMap<i64, ChatSyncSummary> =
             std::collections::HashMap::new();
 
-        // Build ignore set for fast lookup.
-        let ignore_set: HashSet<i64> = opts.ignore_chat_ids.iter().copied().collect();
-
-        let should_ignore = |chat_id: i64, kind: &str| -> bool {
-            if ignore_set.contains(&chat_id) {
-                return true;
+        for result in results {
+            // Log errors but continue
+            if let Some(err) = &result.error {
+                log::warn!("{}", err);
             }
-            if opts.ignore_channels && kind == "channel" {
-                return true;
-            }
-            false
-        };
 
-        let client = &self.tg.client;
-
-        // Progress tracking
-        let mut last_progress_time = std::time::Instant::now();
-        let progress_interval = Duration::from_millis(500);
-
-        if opts.show_progress {
-            eprint!("\rSyncing messages... 0 chats, 0 messages");
-        }
-
-        // Get all chats that have sync checkpoints
-        let chats_with_checkpoints = self.store.list_chats_with_checkpoint().await?;
-        let total_chats = chats_with_checkpoints.len();
-
-        for (idx, chat) in chats_with_checkpoints.into_iter().enumerate() {
-            // Skip ignored chats
-            if should_ignore(chat.id, &chat.kind) {
+            if result.messages.is_empty() && result.highest_msg_id.is_none() {
                 continue;
             }
 
-            // Try to resolve peer from session or stored access_hash (no API call)
-            let peer_ref =
-                match self.resolve_peer_from_session(chat.id, &chat.kind, chat.access_hash) {
-                    Some(p) => p,
-                    None => {
-                        log::debug!(
-                        "Skipping chat {} ({}) - not in session cache and no stored access_hash",
-                        chat.name,
-                        chat.id
-                    );
-                        continue;
-                    }
-                };
-
             chats_processed += 1;
 
-            // Get the last synced message ID
-            let last_sync_id = chat.last_sync_message_id;
-
-            // Fetch messages incrementally
-            let mut message_iter = client.iter_messages(peer_ref);
-            let mut count = 0;
-            let mut latest_ts: Option<DateTime<Utc>> = None;
-            let mut highest_msg_id: Option<i64> = None;
-            let mut topic_counts: std::collections::HashMap<i32, u64> =
-                std::collections::HashMap::new();
-
-            while let Some(msg) = message_iter.next().await.with_context(|| {
-                format!(
-                    "Failed to fetch messages for chat {} ({})",
-                    chat.name, chat.id
-                )
-            })? {
-                let msg_id = msg.id() as i64;
-
-                // Stop when we hit a message we've already seen
-                if let Some(last_id) = last_sync_id {
-                    if msg_id <= last_id {
-                        log::debug!(
-                            "Chat {}: reached last synced message {} (stopping at {})",
-                            chat.id,
-                            last_id,
-                            msg_id
-                        );
-                        break;
-                    }
-                }
-
-                if count >= INCREMENTAL_MAX_MESSAGES {
-                    break;
-                }
-                count += 1;
-
-                // Track the highest message ID we've seen
-                if highest_msg_id.is_none() || msg_id > highest_msg_id.unwrap() {
-                    highest_msg_id = Some(msg_id);
-                }
-
-                let msg_ts = msg.date();
-                if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
-                    latest_ts = Some(msg_ts);
-                }
-
-                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
-                let from_me = msg.outgoing();
-
-                let text = msg.text().to_string();
-                let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
-                let topic_id = if chat.is_forum {
-                    extract_topic_id(&msg)
-                } else {
-                    None
-                };
-
-                // Track per-topic counts for forums
-                if let Some(tid) = topic_id {
-                    *topic_counts.entry(tid).or_insert(0) += 1;
-                }
-
-                // Download media if enabled
-                let (media_type, media_path) = if opts.download_media {
-                    self.download_message_media(&msg, chat.id).await?
-                } else {
-                    (msg.media().map(|_| "media".to_string()), None)
-                };
-
-                // Clone media_type for use in stream output after the move
-                let media_type_out = media_type.clone();
-
-                self.store
-                    .upsert_message(UpsertMessageParams {
-                        id: msg.id() as i64,
-                        chat_id: chat.id,
-                        sender_id,
-                        ts: msg_ts,
-                        edit_ts: msg.edit_date(),
-                        from_me,
-                        text: text.clone(),
-                        media_type,
-                        media_path,
-                        reply_to_id,
-                        topic_id,
-                    })
-                    .await?;
-                messages_stored += 1;
-
-                // Show progress periodically
-                if opts.show_progress && last_progress_time.elapsed() >= progress_interval {
-                    eprint!(
-                        "\rSyncing messages... {}/{} chats, {} messages",
-                        idx + 1,
-                        total_chats,
-                        messages_stored
-                    );
-                    last_progress_time = std::time::Instant::now();
-                }
-
-                // Output
+            // Write messages to store
+            for msg in &result.messages {
+                // Output based on mode
                 match opts.output {
                     OutputMode::Text => {
-                        let from_label = if from_me {
+                        let from_label = if msg.from_me {
                             "me".to_string()
                         } else {
-                            sender_id.to_string()
+                            msg.sender_id.to_string()
                         };
-                        let short_text = text.replace('\n', " ");
+                        let short_text = msg.text.replace('\n', " ");
                         let short_text = if short_text.len() > 100 {
                             let truncate_at = short_text
                                 .char_indices()
@@ -626,20 +767,17 @@ impl App {
                         };
                         println!(
                             "from={} chat={} id={} text={}",
-                            from_label,
-                            chat.id,
-                            msg.id(),
-                            short_text
+                            from_label, result.chat_id, msg.id, short_text
                         );
                     }
                     OutputMode::Json => {
                         let obj = serde_json::json!({
-                            "from_me": from_me,
-                            "sender": sender_id,
-                            "chat": chat.id,
-                            "id": msg.id(),
-                            "timestamp": msg_ts.to_rfc3339(),
-                            "text": text,
+                            "from_me": msg.from_me,
+                            "sender": msg.sender_id,
+                            "chat": result.chat_id,
+                            "id": msg.id,
+                            "timestamp": msg.ts.to_rfc3339(),
+                            "text": msg.text,
                         });
                         println!("{}", serde_json::to_string(&obj).unwrap_or_default());
                     }
@@ -647,74 +785,91 @@ impl App {
                         use std::io::Write;
                         let obj = serde_json::json!({
                             "type": "message",
-                            "from_me": from_me,
-                            "sender_id": sender_id,
-                            "chat_id": chat.id,
-                            "id": msg.id(),
-                            "ts": msg_ts.to_rfc3339(),
-                            "text": text,
-                            "topic_id": topic_id,
-                            "media_type": media_type_out,
+                            "from_me": msg.from_me,
+                            "sender_id": msg.sender_id,
+                            "chat_id": result.chat_id,
+                            "id": msg.id,
+                            "ts": msg.ts.to_rfc3339(),
+                            "text": msg.text,
+                            "topic_id": msg.topic_id,
+                            "media_type": msg.media_type,
                         });
                         println!("{}", serde_json::to_string(&obj).unwrap_or_default());
                         let _ = std::io::stdout().flush();
                     }
                     OutputMode::None => {}
                 }
+
+                self.store
+                    .upsert_message(UpsertMessageParams {
+                        id: msg.id,
+                        chat_id: result.chat_id,
+                        sender_id: msg.sender_id,
+                        ts: msg.ts,
+                        edit_ts: msg.edit_ts,
+                        from_me: msg.from_me,
+                        text: msg.text.clone(),
+                        media_type: msg.media_type.clone(),
+                        media_path: msg.media_path.clone(),
+                        reply_to_id: msg.reply_to_id,
+                        topic_id: msg.topic_id,
+                    })
+                    .await?;
+                messages_stored += 1;
             }
 
             // Update chat's last_message_ts if we got new messages
-            if let Some(ts) = latest_ts {
+            if let Some(ts) = result.latest_ts {
                 self.store
                     .upsert_chat(
-                        chat.id,
-                        &chat.kind,
-                        &chat.name,
-                        chat.username.as_deref(),
+                        result.chat_id,
+                        &result.chat_kind,
+                        &result.chat_name,
+                        result.chat_username.as_deref(),
                         Some(ts),
-                        chat.is_forum,
-                        chat.access_hash,
+                        result.is_forum,
+                        result.access_hash,
                     )
                     .await?;
             }
 
             // Update last_sync_message_id for incremental sync
-            if let Some(high_id) = highest_msg_id {
+            if let Some(high_id) = result.highest_msg_id {
                 self.store
-                    .update_last_sync_message_id(chat.id, high_id)
+                    .update_last_sync_message_id(result.chat_id, high_id)
                     .await?;
             }
 
             // Track per-chat summary if messages were synced
-            if count > 0 {
+            if !result.messages.is_empty() {
                 // Build topic summaries for forums
-                let new_topics: Vec<TopicSyncSummary> = if chat.is_forum && !topic_counts.is_empty()
-                {
-                    let mut topic_summaries = Vec::new();
-                    for (tid, msg_count) in &topic_counts {
-                        let topic_name = self
-                            .store
-                            .get_topic(chat.id, *tid)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|t| t.name.clone())
-                            .unwrap_or_else(|| format!("Topic {}", tid));
-                        topic_summaries.push(TopicSyncSummary {
-                            topic_id: *tid,
-                            topic_name,
-                            messages_synced: *msg_count,
-                        });
-                    }
-                    topic_summaries
-                } else {
-                    Vec::new()
-                };
+                let new_topics: Vec<TopicSyncSummary> =
+                    if result.is_forum && !result.topic_counts.is_empty() {
+                        let mut topic_summaries = Vec::new();
+                        for (tid, msg_count) in &result.topic_counts {
+                            let topic_name = self
+                                .store
+                                .get_topic(result.chat_id, *tid)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|t| t.name.clone())
+                                .unwrap_or_else(|| format!("Topic {}", tid));
+                            topic_summaries.push(TopicSyncSummary {
+                                topic_id: *tid,
+                                topic_name,
+                                messages_synced: *msg_count,
+                            });
+                        }
+                        topic_summaries
+                    } else {
+                        Vec::new()
+                    };
 
                 per_chat_map
-                    .entry(chat.id)
+                    .entry(result.chat_id)
                     .and_modify(|existing| {
-                        existing.messages_synced += count as u64;
+                        existing.messages_synced += result.messages.len() as u64;
                         for new_topic in &new_topics {
                             if let Some(existing_topic) = existing
                                 .topics
@@ -728,20 +883,17 @@ impl App {
                         }
                     })
                     .or_insert(ChatSyncSummary {
-                        chat_id: chat.id,
-                        chat_name: chat.name.clone(),
-                        messages_synced: count as u64,
+                        chat_id: result.chat_id,
+                        chat_name: result.chat_name.clone(),
+                        messages_synced: result.messages.len() as u64,
                         topics: new_topics,
                     });
             }
         }
 
-        if opts.show_progress {
-            eprint!("\r\x1b[K"); // Clear line
-        }
         eprintln!(
-            "Messages sync complete: {} chats checked, {} messages",
-            chats_processed, messages_stored
+            "Messages sync complete: {} chats checked, {} messages (concurrency: {})",
+            chats_processed, messages_stored, concurrency
         );
 
         // Convert HashMap to Vec and sort topics by message count descending
@@ -1516,6 +1668,152 @@ impl App {
 
         log::info!("Fetched {} archived dialogs", all_peers.len());
         Ok(all_peers)
+    }
+}
+
+/// Static version of resolve_peer_from_session for use in async tasks
+fn resolve_peer_from_session_static(
+    session: &SqliteSession,
+    chat_id: i64,
+    kind: &str,
+    stored_access_hash: Option<i64>,
+) -> Option<PeerRef> {
+    // Try based on the known type first
+    match kind {
+        "channel" | "group" => {
+            let channel_peer_id = PeerId::channel(chat_id);
+            if let Some(info) = session.peer(channel_peer_id) {
+                return Some(PeerRef {
+                    id: channel_peer_id,
+                    auth: info.auth(),
+                });
+            }
+            if let Some(hash) = stored_access_hash {
+                return Some(PeerRef {
+                    id: channel_peer_id,
+                    auth: PeerAuth::from_hash(hash),
+                });
+            }
+        }
+        "user" => {
+            let user_peer_id = PeerId::user(chat_id);
+            if let Some(info) = session.peer(user_peer_id) {
+                return Some(PeerRef {
+                    id: user_peer_id,
+                    auth: info.auth(),
+                });
+            }
+            if let Some(hash) = stored_access_hash {
+                return Some(PeerRef {
+                    id: user_peer_id,
+                    auth: PeerAuth::from_hash(hash),
+                });
+            }
+        }
+        _ => {}
+    }
+
+    // Fallback: try all peer types from session cache
+    let channel_peer_id = PeerId::channel(chat_id);
+    if let Some(info) = session.peer(channel_peer_id) {
+        return Some(PeerRef {
+            id: channel_peer_id,
+            auth: info.auth(),
+        });
+    }
+
+    let user_peer_id = PeerId::user(chat_id);
+    if let Some(info) = session.peer(user_peer_id) {
+        return Some(PeerRef {
+            id: user_peer_id,
+            auth: info.auth(),
+        });
+    }
+
+    if chat_id > 0 && chat_id <= 999999999999 {
+        let chat_peer_id = PeerId::chat(chat_id);
+        if let Some(info) = session.peer(chat_peer_id) {
+            return Some(PeerRef {
+                id: chat_peer_id,
+                auth: info.auth(),
+            });
+        }
+        if stored_access_hash.is_some() {
+            return Some(PeerRef {
+                id: chat_peer_id,
+                auth: PeerAuth::default(),
+            });
+        }
+    }
+
+    if let Some(hash) = stored_access_hash {
+        return Some(PeerRef {
+            id: channel_peer_id,
+            auth: PeerAuth::from_hash(hash),
+        });
+    }
+
+    None
+}
+
+/// Static version of download_message_media for use in async tasks
+async fn download_message_media_static(
+    client: &Client,
+    msg: &TgMessage,
+    chat_id: i64,
+    store_dir: &str,
+) -> Result<(Option<String>, Option<String>)> {
+    let media = match msg.media() {
+        Some(m) => m,
+        None => return Ok((None, None)),
+    };
+
+    let (media_type, ext) = media_info(&media);
+
+    // Skip non-downloadable media types
+    if ext.is_empty() {
+        return Ok((Some(media_type), None));
+    }
+
+    // Build path: {store_dir}/media/{chat_id}/{message_id}.{ext}
+    let media_dir = Path::new(store_dir).join("media").join(chat_id.to_string());
+
+    std::fs::create_dir_all(&media_dir)?;
+
+    let file_name = format!("{}.{}", msg.id(), ext);
+    let file_path = media_dir.join(&file_name);
+
+    // Skip if file already exists (idempotent)
+    if file_path.exists() {
+        return Ok((
+            Some(media_type),
+            Some(file_path.to_string_lossy().to_string()),
+        ));
+    }
+
+    // Download the media
+    match client.download_media(&media, &file_path).await {
+        Ok(()) => {
+            log::info!(
+                "Downloaded media: chat={} msg={} -> {}",
+                chat_id,
+                msg.id(),
+                file_path.display()
+            );
+            Ok((
+                Some(media_type),
+                Some(file_path.to_string_lossy().to_string()),
+            ))
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to download media for chat={} msg={}: {}",
+                chat_id,
+                msg.id(),
+                e
+            );
+            Ok((Some(media_type), None))
+        }
     }
 }
 

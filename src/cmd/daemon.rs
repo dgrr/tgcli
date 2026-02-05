@@ -205,6 +205,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                 show_progress: !quiet,
                 incremental: true,
                 messages_per_chat: 50,
+                concurrency: 4,
             };
 
             let result = backfill_app.sync(opts).await;

@@ -39,6 +39,10 @@ pub struct CommonSyncArgs {
     #[arg(long, default_value = "50")]
     pub messages_per_chat: usize,
 
+    /// Number of concurrent chat syncs (default: 4)
+    #[arg(long, default_value = "4")]
+    pub concurrency: usize,
+
     /// Suppress summary output (just show "Sync complete")
     #[arg(long, default_value_t = false)]
     pub quiet: bool,
@@ -92,6 +96,7 @@ fn build_sync_options(cli: &Cli, common: &CommonSyncArgs) -> crate::app::sync::S
         show_progress: !common.no_progress,
         incremental,
         messages_per_chat: common.messages_per_chat,
+        concurrency: common.concurrency,
     }
 }
 
