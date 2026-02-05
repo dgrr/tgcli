@@ -10,6 +10,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
+/// Maximum messages to fetch per chat during initial sync.
+const MESSAGES_PER_CHAT: usize = 50;
+
 #[derive(Debug, Clone, Copy)]
 pub enum SyncMode {
     Once,
@@ -261,7 +264,7 @@ impl App {
                 .await
                 .with_context(|| format!("Failed to fetch messages for chat {} ({})", name, id))?
             {
-                if count >= 100 {
+                if count >= MESSAGES_PER_CHAT {
                     break;
                 }
                 count += 1;
@@ -370,6 +373,128 @@ impl App {
             if is_forum {
                 if let Ok(topic_count) = self.sync_topics(id).await {
                     log::info!("Synced {} topics for forum chat {}", topic_count, id);
+                }
+            }
+        }
+
+        // Phase 1b: Also sync archived dialogs (folder_id=1)
+        if opts.show_progress {
+            eprint!(
+                "\rSyncing archived... {} chats, {} messages",
+                chats_stored, messages_stored
+            );
+        }
+
+        let archived_peers = self.fetch_archived_dialogs().await?;
+        for peer in archived_peers {
+            let (kind, name, username, is_forum) = peer_info(&peer);
+            let id = peer.id().bare_id();
+
+            // Skip ignored chats.
+            if should_ignore(id, &kind) {
+                continue;
+            }
+
+            self.store
+                .upsert_chat(id, &kind, &name, username.as_deref(), None, is_forum)
+                .await?;
+            chats_stored += 1;
+
+            // Also store as contact if it's a user
+            if let Peer::User(ref user) = peer {
+                self.store
+                    .upsert_contact(
+                        user.bare_id(),
+                        user.username(),
+                        user.first_name().unwrap_or(""),
+                        user.last_name().unwrap_or(""),
+                        user.phone().unwrap_or(""),
+                    )
+                    .await?;
+            }
+
+            // Fetch recent messages for this chat
+            let peer_ref = PeerRef::from(&peer);
+            let mut message_iter = client.iter_messages(peer_ref);
+            let mut count = 0;
+            let mut latest_ts: Option<DateTime<Utc>> = None;
+
+            while let Some(msg) = message_iter.next().await.with_context(|| {
+                format!(
+                    "Failed to fetch messages for archived chat {} ({})",
+                    name, id
+                )
+            })? {
+                if count >= MESSAGES_PER_CHAT {
+                    break;
+                }
+                count += 1;
+
+                let msg_ts = msg.date();
+                if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
+                    latest_ts = Some(msg_ts);
+                }
+
+                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let from_me = msg.outgoing();
+
+                let text = msg.text().to_string();
+                let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+                let topic_id = if is_forum {
+                    extract_topic_id(&msg)
+                } else {
+                    None
+                };
+
+                // Download media if enabled
+                let (media_type, media_path) = if opts.download_media {
+                    self.download_message_media(&msg, id).await?
+                } else {
+                    (msg.media().map(|_| "media".to_string()), None)
+                };
+
+                self.store
+                    .upsert_message(UpsertMessageParams {
+                        id: msg.id() as i64,
+                        chat_id: id,
+                        sender_id,
+                        ts: msg_ts,
+                        edit_ts: msg.edit_date(),
+                        from_me,
+                        text: text.clone(),
+                        media_type,
+                        media_path,
+                        reply_to_id,
+                        topic_id,
+                    })
+                    .await?;
+                messages_stored += 1;
+
+                // Show progress periodically
+                if opts.show_progress && last_progress_time.elapsed() >= progress_interval {
+                    eprint!(
+                        "\rSyncing archived... {} chats, {} messages",
+                        chats_stored, messages_stored
+                    );
+                    last_progress_time = std::time::Instant::now();
+                }
+            }
+
+            // Update chat's last_message_ts
+            if let Some(ts) = latest_ts {
+                self.store
+                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts), is_forum)
+                    .await?;
+            }
+
+            // If it's a forum, sync topics
+            if is_forum {
+                if let Ok(topic_count) = self.sync_topics(id).await {
+                    log::info!(
+                        "Synced {} topics for archived forum chat {}",
+                        topic_count,
+                        id
+                    );
                 }
             }
         }
@@ -803,6 +928,175 @@ impl App {
             chats: chats_stored,
             messages: messages_stored,
         })
+    }
+
+    /// Fetch archived dialogs (folder_id=1) using raw API.
+    /// Returns a Vec of Peer objects (resolved from users/chats).
+    async fn fetch_archived_dialogs(&self) -> Result<Vec<Peer>> {
+        let mut all_peers = Vec::new();
+        let mut offset_date = 0i32;
+        let mut offset_id = 0i32;
+        let mut offset_peer = tl::enums::InputPeer::Empty;
+
+        loop {
+            let request = tl::functions::messages::GetDialogs {
+                exclude_pinned: false,
+                folder_id: Some(1), // 1 = Archive folder
+                offset_date,
+                offset_id,
+                offset_peer: offset_peer.clone(),
+                limit: 100,
+                hash: 0,
+            };
+
+            let response = self
+                .tg
+                .client
+                .invoke(&request)
+                .await
+                .context("Failed to fetch archived dialogs")?;
+
+            let (dialogs, messages, users, chats, is_slice) = match response {
+                tl::enums::messages::Dialogs::Dialogs(d) => {
+                    (d.dialogs, d.messages, d.users, d.chats, false)
+                }
+                tl::enums::messages::Dialogs::Slice(d) => {
+                    (d.dialogs, d.messages, d.users, d.chats, true)
+                }
+                tl::enums::messages::Dialogs::NotModified(_) => {
+                    break; // No changes
+                }
+            };
+
+            if dialogs.is_empty() {
+                break;
+            }
+
+            let batch_count = dialogs.len();
+
+            // Build lookup maps for users and chats
+            let users_map: std::collections::HashMap<i64, tl::enums::User> = users
+                .into_iter()
+                .filter_map(|u| {
+                    if let tl::enums::User::User(ref user) = u {
+                        Some((user.id, u))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let chats_map: std::collections::HashMap<i64, tl::enums::Chat> = chats
+                .into_iter()
+                .filter_map(|c| {
+                    let id = match &c {
+                        tl::enums::Chat::Empty(ch) => ch.id,
+                        tl::enums::Chat::Chat(ch) => ch.id,
+                        tl::enums::Chat::Forbidden(ch) => ch.id,
+                        tl::enums::Chat::Channel(ch) => ch.id,
+                        tl::enums::Chat::ChannelForbidden(ch) => ch.id,
+                    };
+                    Some((id, c))
+                })
+                .collect();
+
+            // Track last message info for pagination
+            let mut last_offset_date = 0i32;
+            let mut last_offset_id = 0i32;
+            let mut last_peer_id: Option<i64> = None;
+            let mut last_peer_kind: Option<&str> = None;
+
+            for dialog in &dialogs {
+                let peer_tl = match dialog {
+                    tl::enums::Dialog::Dialog(d) => &d.peer,
+                    tl::enums::Dialog::Folder(_) => continue, // Skip folder entries
+                };
+
+                // Get top_message for offset tracking
+                if let tl::enums::Dialog::Dialog(d) = dialog {
+                    for msg in &messages {
+                        if let tl::enums::Message::Message(m) = msg {
+                            if m.id == d.top_message {
+                                last_offset_date = m.date;
+                                last_offset_id = m.id;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let peer = match peer_tl {
+                    tl::enums::Peer::User(u) => {
+                        last_peer_id = Some(u.user_id);
+                        last_peer_kind = Some("user");
+                        if let Some(user) = users_map.get(&u.user_id) {
+                            Peer::User(grammers_client::types::User::from_raw(user.clone()))
+                        } else {
+                            continue;
+                        }
+                    }
+                    tl::enums::Peer::Chat(c) => {
+                        last_peer_id = Some(c.chat_id);
+                        last_peer_kind = Some("chat");
+                        if let Some(chat) = chats_map.get(&c.chat_id) {
+                            Peer::Group(grammers_client::types::Group::from_raw(chat.clone()))
+                        } else {
+                            continue;
+                        }
+                    }
+                    tl::enums::Peer::Channel(c) => {
+                        last_peer_id = Some(c.channel_id);
+                        last_peer_kind = Some("channel");
+                        if let Some(chat) = chats_map.get(&c.channel_id) {
+                            match chat {
+                                tl::enums::Chat::Channel(ch) if ch.broadcast => Peer::Channel(
+                                    grammers_client::types::Channel::from_raw(chat.clone()),
+                                ),
+                                tl::enums::Chat::Channel(_) => {
+                                    // Megagroup (supergroup) - treat as Group
+                                    Peer::Group(grammers_client::types::Group::from_raw(
+                                        chat.clone(),
+                                    ))
+                                }
+                                _ => continue,
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+
+                all_peers.push(peer);
+            }
+
+            // If not a slice or got fewer than requested, we're done
+            if !is_slice || batch_count < 100 {
+                break;
+            }
+
+            // Update offsets for next iteration
+            offset_date = last_offset_date;
+            offset_id = last_offset_id;
+            if let (Some(id), Some(kind)) = (last_peer_id, last_peer_kind) {
+                offset_peer = match kind {
+                    "user" => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+                        user_id: id,
+                        access_hash: 0,
+                    }),
+                    "chat" => tl::enums::InputPeer::Chat(tl::types::InputPeerChat { chat_id: id }),
+                    "channel" => tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
+                        channel_id: id,
+                        access_hash: 0,
+                    }),
+                    _ => break,
+                };
+            } else {
+                break;
+            }
+        }
+
+        log::info!("Fetched {} archived dialogs", all_peers.len());
+        Ok(all_peers)
     }
 }
 
