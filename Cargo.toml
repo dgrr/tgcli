@@ -22,6 +22,7 @@ grammers-tl-types = "0.8"
 grammers-mtsender = "0.8"
 turso = "0.4"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

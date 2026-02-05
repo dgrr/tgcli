@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod chats;
 pub mod clear;
+pub mod completions;
 pub mod contacts;
 pub mod folders;
 pub mod messages;
@@ -73,6 +74,12 @@ pub enum Command {
     Typing(typing::TypingArgs),
     /// Show version info
     Version,
+    /// Generate shell completions
+    Completions {
+        /// Shell type to generate completions for
+        #[arg(value_enum)]
+        shell: completions::ShellType,
+    },
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -95,5 +102,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             version::run(&cli);
             Ok(())
         }
+        Command::Completions { shell } => completions::run(shell),
     }
 }
