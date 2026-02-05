@@ -737,19 +737,29 @@ fn peer_info(peer: &Peer) -> (String, String, Option<String>, bool) {
     }
 }
 
-/// Extract topic_id from a message's reply header if it's a forum topic message
+/// Extract topic_id from a message's reply header if it's a forum topic message.
+///
+/// In forum groups:
+/// - `reply_to_top_id` always indicates the topic thread ID (when present)
+/// - For direct posts to a topic (not replies), `reply_to_msg_id` is the topic ID
+/// - The `forum_topic` flag should be set for forum messages, but we also check
+///   `reply_to_top_id` unconditionally as it's specifically for forum threads
 fn extract_topic_id(msg: &TgMessage) -> Option<i32> {
     match &msg.raw {
         tl::enums::Message::Message(m) => {
             if let Some(tl::enums::MessageReplyHeader::Header(header)) = &m.reply_to {
-                // reply_to_top_id is the topic ID for forum messages
-                // If it's a top-level message in a topic, reply_to_msg_id itself is the topic ID
-                if header.forum_topic {
-                    // For forum topics, reply_to_top_id or reply_to_msg_id indicates the topic
-                    header.reply_to_top_id.or(header.reply_to_msg_id)
-                } else {
-                    None
+                // reply_to_top_id is specifically the forum topic/thread ID - always use it if present
+                if let Some(top_id) = header.reply_to_top_id {
+                    return Some(top_id);
                 }
+
+                // For direct posts to a topic (not replying to a specific message),
+                // reply_to_msg_id is the topic ID when forum_topic flag is set
+                if header.forum_topic {
+                    return header.reply_to_msg_id;
+                }
+
+                None
             } else {
                 None
             }
