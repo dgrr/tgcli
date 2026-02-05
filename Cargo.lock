@@ -1859,7 +1859,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tgrs"
+name = "tgcli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
