@@ -1691,3 +1691,694 @@ fn extract_topic_id_from_raw(msg: &tl::enums::Message) -> Option<i32> {
         _ => None,
     }
 }
+
+/// Result from joining a chat
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JoinChatResult {
+    pub id: i64,
+    pub kind: String,
+    pub name: String,
+}
+
+/// Result from creating an invite link
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InviteLinkResult {
+    pub link: String,
+    pub expire_date: Option<String>,
+    pub usage_limit: Option<i32>,
+}
+
+/// Draft message info
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DraftInfo {
+    pub chat_id: i64,
+    pub text: String,
+    pub date: String,
+    pub reply_to_msg_id: Option<i32>,
+}
+
+/// Result from downloading media
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DownloadResult {
+    pub path: String,
+    pub media_type: String,
+    pub size: u64,
+}
+
+impl App {
+    /// Join a chat by invite link or username.
+    pub async fn join_chat(
+        &self,
+        link: Option<&str>,
+        username: Option<&str>,
+    ) -> Result<JoinChatResult> {
+        if let Some(invite_link) = link {
+            // Extract hash from invite link
+            let hash = extract_invite_hash(invite_link)?;
+
+            let request = tl::functions::messages::ImportChatInvite { hash };
+            let updates = self
+                .tg
+                .client
+                .invoke(&request)
+                .await
+                .context("Failed to join chat via invite link")?;
+
+            // Extract chat info from updates
+            extract_chat_from_updates(&updates)
+        } else if let Some(uname) = username {
+            // Strip @ if present
+            let clean_username = uname.trim_start_matches('@');
+
+            // Resolve username to get the chat
+            let peer = self
+                .tg
+                .client
+                .resolve_username(clean_username)
+                .await
+                .context(format!("Failed to resolve username '{}'", clean_username))?;
+
+            let peer =
+                peer.ok_or_else(|| anyhow::anyhow!("Username '{}' not found", clean_username))?;
+
+            // Join the chat
+            let peer_ref = PeerRef::from(&peer);
+            let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+            // Determine if it's a channel/supergroup or a basic chat
+            match input_peer {
+                tl::enums::InputPeer::Channel(ch) => {
+                    let request = tl::functions::channels::JoinChannel {
+                        channel: tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                            channel_id: ch.channel_id,
+                            access_hash: ch.access_hash,
+                        }),
+                    };
+                    self.tg
+                        .client
+                        .invoke(&request)
+                        .await
+                        .context("Failed to join channel")?;
+                }
+                _ => {
+                    anyhow::bail!(
+                        "Cannot join this type of chat via username. Use an invite link instead."
+                    );
+                }
+            }
+
+            // Return info about the joined chat
+            let (kind, name) = match &peer {
+                grammers_client::types::Peer::Channel(ch) => {
+                    ("channel".to_string(), ch.title().to_string())
+                }
+                grammers_client::types::Peer::Group(g) => {
+                    ("group".to_string(), g.title().unwrap_or("").to_string())
+                }
+                grammers_client::types::Peer::User(u) => ("user".to_string(), u.full_name()),
+            };
+
+            Ok(JoinChatResult {
+                id: peer.id().bare_id(),
+                kind,
+                name,
+            })
+        } else {
+            anyhow::bail!("Either link or username must be provided")
+        }
+    }
+
+    /// Leave a chat.
+    pub async fn leave_chat(&self, chat_id: i64) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        match input_peer {
+            tl::enums::InputPeer::Channel(ch) => {
+                let request = tl::functions::channels::LeaveChannel {
+                    channel: tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                        channel_id: ch.channel_id,
+                        access_hash: ch.access_hash,
+                    }),
+                };
+                self.tg
+                    .client
+                    .invoke(&request)
+                    .await
+                    .context(format!("Failed to leave channel {}", chat_id))?;
+            }
+            tl::enums::InputPeer::Chat(ch) => {
+                // For basic groups, use messages.deleteChatUser
+                let request = tl::functions::messages::DeleteChatUser {
+                    revoke_history: false,
+                    chat_id: ch.chat_id,
+                    user_id: tl::enums::InputUser::UserSelf,
+                };
+                self.tg
+                    .client
+                    .invoke(&request)
+                    .await
+                    .context(format!("Failed to leave chat {}", chat_id))?;
+            }
+            _ => {
+                anyhow::bail!("Cannot leave this type of chat (user chats can only be deleted)");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the primary invite link for a chat.
+    pub async fn get_invite_link(&self, chat_id: i64) -> Result<String> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let request = tl::functions::messages::ExportChatInvite {
+            legacy_revoke_permanent: false,
+            request_needed: false,
+            peer: input_peer,
+            expire_date: None,
+            usage_limit: None,
+            title: None,
+            subscription_pricing: None,
+        };
+        let result = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to get invite link for chat {}", chat_id))?;
+
+        match result {
+            tl::enums::ExportedChatInvite::ChatInviteExported(inv) => Ok(inv.link),
+            tl::enums::ExportedChatInvite::ChatInvitePublicJoinRequests => {
+                anyhow::bail!("Chat requires join request approval")
+            }
+        }
+    }
+
+    /// Create a new invite link for a chat.
+    pub async fn create_invite_link(
+        &self,
+        chat_id: i64,
+        expire_date: Option<i32>,
+        usage_limit: Option<i32>,
+    ) -> Result<InviteLinkResult> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let request = tl::functions::messages::ExportChatInvite {
+            legacy_revoke_permanent: false,
+            request_needed: false,
+            peer: input_peer,
+            expire_date,
+            usage_limit,
+            title: None,
+            subscription_pricing: None,
+        };
+
+        let result = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to create invite link for chat {}", chat_id))?;
+
+        match result {
+            tl::enums::ExportedChatInvite::ChatInviteExported(inv) => {
+                let expire_str = inv.expire_date.and_then(|ts| {
+                    chrono::DateTime::from_timestamp(ts as i64, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                });
+
+                Ok(InviteLinkResult {
+                    link: inv.link,
+                    expire_date: expire_str,
+                    usage_limit: inv.usage_limit,
+                })
+            }
+            tl::enums::ExportedChatInvite::ChatInvitePublicJoinRequests => {
+                anyhow::bail!("Chat requires join request approval")
+            }
+        }
+    }
+
+    /// Mute notifications for a chat.
+    pub async fn mute_chat(&self, chat_id: i64, mute_until: i32) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let settings = tl::types::InputPeerNotifySettings {
+            show_previews: None,
+            silent: None,
+            mute_until: Some(mute_until),
+            sound: None,
+            stories_muted: None,
+            stories_hide_sender: None,
+            stories_sound: None,
+        };
+
+        let request = tl::functions::account::UpdateNotifySettings {
+            peer: tl::enums::InputNotifyPeer::Peer(tl::types::InputNotifyPeer { peer: input_peer }),
+            settings: tl::enums::InputPeerNotifySettings::Settings(settings),
+        };
+
+        self.tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to mute chat {}", chat_id))?;
+
+        Ok(())
+    }
+
+    /// Unmute notifications for a chat.
+    pub async fn unmute_chat(&self, chat_id: i64) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let settings = tl::types::InputPeerNotifySettings {
+            show_previews: None,
+            silent: None,
+            mute_until: Some(0), // 0 = unmute
+            sound: None,
+            stories_muted: None,
+            stories_hide_sender: None,
+            stories_sound: None,
+        };
+
+        let request = tl::functions::account::UpdateNotifySettings {
+            peer: tl::enums::InputNotifyPeer::Peer(tl::types::InputNotifyPeer { peer: input_peer }),
+            settings: tl::enums::InputPeerNotifySettings::Settings(settings),
+        };
+
+        self.tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to unmute chat {}", chat_id))?;
+
+        Ok(())
+    }
+
+    /// Download media from a message with progress indicator.
+    /// Returns download result with path, media type, and size.
+    pub async fn download_media(
+        &self,
+        chat_id: i64,
+        msg_id: i64,
+        output_path: Option<&str>,
+    ) -> Result<DownloadResult> {
+        use grammers_client::types::Downloadable;
+        use std::io::Write;
+
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        // Fetch the specific message
+        let mut message_iter = self.tg.client.iter_messages(peer_ref);
+        message_iter = message_iter.offset_id(msg_id as i32 + 1).limit(1);
+
+        let msg = message_iter
+            .next()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Message {} not found in chat {}", msg_id, chat_id))?;
+
+        if msg.id() != msg_id as i32 {
+            anyhow::bail!("Message {} not found in chat {}", msg_id, chat_id);
+        }
+
+        let media = msg
+            .media()
+            .ok_or_else(|| anyhow::anyhow!("Message {} has no media", msg_id))?;
+
+        // Get media type
+        let media_type = get_media_type(&media);
+
+        // Determine filename and path
+        let (filename, ext) = get_media_filename(&media, msg_id);
+
+        let final_path = if let Some(out_path) = output_path {
+            let p = std::path::Path::new(out_path);
+            if p.is_dir() {
+                p.join(format!("{}.{}", filename, ext))
+            } else {
+                p.to_path_buf()
+            }
+        } else {
+            // Default to current directory
+            std::path::PathBuf::from(format!("{}.{}", filename, ext))
+        };
+
+        // Get total size if available (for progress)
+        let total_size = media.size();
+
+        // Create output file
+        let mut file = std::fs::File::create(&final_path)
+            .context(format!("Failed to create file '{}'", final_path.display()))?;
+
+        // Download with progress
+        let mut downloaded: u64 = 0;
+        let mut download_iter = self.tg.client.iter_download(&media);
+        let progress_interval = std::time::Duration::from_millis(100);
+        let mut last_progress = std::time::Instant::now();
+
+        while let Some(chunk) = download_iter
+            .next()
+            .await
+            .context("Failed to download chunk")?
+        {
+            file.write_all(&chunk).context("Failed to write to file")?;
+            downloaded += chunk.len() as u64;
+
+            // Show progress
+            if last_progress.elapsed() >= progress_interval {
+                if let Some(total) = total_size {
+                    let percent = (downloaded as f64 / total as f64 * 100.0) as u32;
+                    eprint!(
+                        "\rDownloading... {}% ({}/{})",
+                        percent,
+                        format_size(downloaded),
+                        format_size(total as u64)
+                    );
+                } else {
+                    eprint!("\rDownloading... {}", format_size(downloaded));
+                }
+                let _ = std::io::stderr().flush();
+                last_progress = std::time::Instant::now();
+            }
+        }
+
+        // Clear progress line
+        eprint!("\r\x1b[K");
+        let _ = std::io::stderr().flush();
+
+        Ok(DownloadResult {
+            path: final_path.to_string_lossy().to_string(),
+            media_type,
+            size: downloaded,
+        })
+    }
+
+    /// Mark messages up to a specific message ID as read.
+    pub async fn mark_read_up_to(&self, chat_id: i64, max_id: i64) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        // Use ReadHistory for regular chats, or ReadHistory for channels
+        match &input_peer {
+            tl::enums::InputPeer::Channel(ch) => {
+                let request = tl::functions::channels::ReadHistory {
+                    channel: tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                        channel_id: ch.channel_id,
+                        access_hash: ch.access_hash,
+                    }),
+                    max_id: max_id as i32,
+                };
+                self.tg.client.invoke(&request).await.context(format!(
+                    "Failed to mark messages up to {} as read in channel {}",
+                    max_id, chat_id
+                ))?;
+            }
+            _ => {
+                let request = tl::functions::messages::ReadHistory {
+                    peer: input_peer,
+                    max_id: max_id as i32,
+                };
+                self.tg.client.invoke(&request).await.context(format!(
+                    "Failed to mark messages up to {} as read in chat {}",
+                    max_id, chat_id
+                ))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List all drafts across chats.
+    pub async fn list_drafts(&self, limit: usize) -> Result<Vec<DraftInfo>> {
+        let request = tl::functions::messages::GetAllDrafts {};
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context("Failed to get drafts")?;
+
+        let mut drafts = Vec::new();
+
+        // Extract drafts from updates
+        if let tl::enums::Updates::Updates(u) = updates {
+            for update in u.updates {
+                if let tl::enums::Update::DraftMessage(draft_update) = update {
+                    let chat_id = match draft_update.peer {
+                        tl::enums::Peer::User(u) => u.user_id,
+                        tl::enums::Peer::Chat(c) => c.chat_id,
+                        tl::enums::Peer::Channel(c) => c.channel_id,
+                    };
+
+                    if let tl::enums::DraftMessage::Message(draft) = draft_update.draft {
+                        let date = chrono::DateTime::from_timestamp(draft.date as i64, 0)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        let reply_to_msg_id = draft.reply_to.and_then(|r| {
+                            if let tl::enums::InputReplyTo::Message(m) = r {
+                                Some(m.reply_to_msg_id)
+                            } else {
+                                None
+                            }
+                        });
+
+                        drafts.push(DraftInfo {
+                            chat_id,
+                            text: draft.message,
+                            date,
+                            reply_to_msg_id,
+                        });
+
+                        if drafts.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(drafts)
+    }
+
+    /// Clear draft for a specific chat.
+    pub async fn clear_draft(&self, chat_id: i64) -> Result<()> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let request = tl::functions::messages::SaveDraft {
+            no_webpage: false,
+            invert_media: false,
+            reply_to: None,
+            peer: input_peer,
+            message: String::new(), // Empty message clears the draft
+            entities: None,
+            media: None,
+            effect: None,
+            suggested_post: None,
+        };
+
+        self.tg
+            .client
+            .invoke(&request)
+            .await
+            .context(format!("Failed to clear draft for chat {}", chat_id))?;
+
+        Ok(())
+    }
+}
+
+/// Extract invite hash from various invite link formats
+fn extract_invite_hash(link: &str) -> Result<String> {
+    // Handle formats:
+    // https://t.me/+ABC123
+    // https://t.me/joinchat/ABC123
+    // t.me/+ABC123
+    // +ABC123 (just the hash)
+
+    let link = link.trim();
+
+    // If it starts with +, it's already the hash
+    if link.starts_with('+') {
+        return Ok(link[1..].to_string());
+    }
+
+    // Try to extract from URL
+    if link.contains("t.me/+") {
+        if let Some(pos) = link.find("t.me/+") {
+            let hash = &link[pos + 6..];
+            let hash = hash.split(['?', '/']).next().unwrap_or(hash);
+            return Ok(hash.to_string());
+        }
+    }
+
+    if link.contains("t.me/joinchat/") {
+        if let Some(pos) = link.find("t.me/joinchat/") {
+            let hash = &link[pos + 14..];
+            let hash = hash.split(['?', '/']).next().unwrap_or(hash);
+            return Ok(hash.to_string());
+        }
+    }
+
+    anyhow::bail!(
+        "Invalid invite link format. Expected: https://t.me/+HASH or https://t.me/joinchat/HASH"
+    )
+}
+
+/// Extract chat info from join updates
+fn extract_chat_from_updates(updates: &tl::enums::Updates) -> Result<JoinChatResult> {
+    match updates {
+        tl::enums::Updates::Updates(u) => {
+            for chat in &u.chats {
+                match chat {
+                    tl::enums::Chat::Chat(c) => {
+                        return Ok(JoinChatResult {
+                            id: c.id,
+                            kind: "group".to_string(),
+                            name: c.title.clone(),
+                        });
+                    }
+                    tl::enums::Chat::Channel(c) => {
+                        let kind = if c.broadcast { "channel" } else { "supergroup" };
+                        return Ok(JoinChatResult {
+                            id: c.id,
+                            kind: kind.to_string(),
+                            name: c.title.clone(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            anyhow::bail!("No chat info in join response")
+        }
+        _ => anyhow::bail!("Unexpected response from join"),
+    }
+}
+
+/// Get filename and extension for media
+fn get_media_filename(media: &grammers_client::types::Media, msg_id: i64) -> (String, String) {
+    use grammers_client::types::Media;
+
+    match media {
+        Media::Photo(_) => (format!("photo_{}", msg_id), "jpg".to_string()),
+        Media::Document(doc) => {
+            // Try to get original filename
+            if !doc.name().is_empty() {
+                let name = doc.name();
+                if let Some(pos) = name.rfind('.') {
+                    return (name[..pos].to_string(), name[pos + 1..].to_string());
+                }
+                return (name.to_string(), "bin".to_string());
+            }
+
+            // Determine extension from mime type
+            let ext = doc
+                .mime_type()
+                .map(media_mime_to_ext)
+                .unwrap_or_else(|| "bin".to_string());
+
+            let prefix = if doc.duration().is_some() {
+                if doc.resolution().is_some() {
+                    "video"
+                } else {
+                    "audio"
+                }
+            } else {
+                "document"
+            };
+
+            (format!("{}_{}", prefix, msg_id), ext)
+        }
+        Media::Sticker(sticker) => {
+            let ext = if sticker.is_animated() {
+                "tgs".to_string()
+            } else {
+                sticker
+                    .document
+                    .mime_type()
+                    .map(media_mime_to_ext)
+                    .unwrap_or_else(|| "webp".to_string())
+            };
+            (format!("sticker_{}", msg_id), ext)
+        }
+        _ => (format!("media_{}", msg_id), "bin".to_string()),
+    }
+}
+
+/// Convert MIME type to file extension (for media download)
+fn media_mime_to_ext(mime: &str) -> String {
+    match mime {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        "audio/ogg" | "audio/opus" => "ogg",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/m4a" => "m4a",
+        "audio/wav" => "wav",
+        "audio/flac" => "flac",
+        "application/pdf" => "pdf",
+        "application/zip" => "zip",
+        "application/x-rar-compressed" => "rar",
+        "application/x-7z-compressed" => "7z",
+        "text/plain" => "txt",
+        "application/json" => "json",
+        "application/x-tgsticker" => "tgs",
+        _ => mime.split('/').next_back().unwrap_or("bin"),
+    }
+    .to_string()
+}
+
+/// Get media type string from Media enum
+fn get_media_type(media: &grammers_client::types::Media) -> String {
+    use grammers_client::types::Media;
+
+    match media {
+        Media::Photo(_) => "photo".to_string(),
+        Media::Document(doc) => {
+            if doc.duration().is_some() {
+                if doc.resolution().is_some() {
+                    "video".to_string()
+                } else {
+                    "audio".to_string()
+                }
+            } else {
+                "document".to_string()
+            }
+        }
+        Media::Sticker(_) => "sticker".to_string(),
+        Media::Contact(_) => "contact".to_string(),
+        Media::Poll(_) => "poll".to_string(),
+        Media::Geo(_) => "geo".to_string(),
+        Media::Dice(_) => "dice".to_string(),
+        Media::Venue(_) => "venue".to_string(),
+        Media::GeoLive(_) => "geolive".to_string(),
+        Media::WebPage(_) => "webpage".to_string(),
+        _ => "media".to_string(),
+    }
+}
+
+/// Format file size for human readability
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}

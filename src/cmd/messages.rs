@@ -228,6 +228,18 @@ pub enum MessagesCommand {
         #[arg(long)]
         remove: bool,
     },
+    /// Download media from a message
+    Download {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID containing media
+        #[arg(long = "message")]
+        msg_id: i64,
+        /// Output path (default: current directory with auto-detected filename)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
@@ -662,6 +674,32 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     "Added reaction {} to message {} in chat {}",
                     emoji, msg_id, chat
                 );
+            }
+        }
+        MessagesCommand::Download {
+            chat,
+            msg_id,
+            output,
+        } => {
+            // Download requires network access
+            let app = App::new(cli).await?;
+
+            let result = app
+                .download_media(*chat, *msg_id, output.as_deref())
+                .await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "success": true,
+                    "chat_id": chat,
+                    "message_id": msg_id,
+                    "path": result.path,
+                    "media_type": result.media_type,
+                    "size": result.size,
+                }))?;
+            } else {
+                println!("Downloaded {} to {}", result.media_type, result.path);
+                println!("Size: {} bytes", result.size);
             }
         }
     }

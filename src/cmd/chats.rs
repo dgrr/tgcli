@@ -153,6 +153,51 @@ pub enum ChatsCommand {
         #[arg(long)]
         description: Option<String>,
     },
+    /// Join a group or channel
+    Join {
+        /// Invite link (e.g., https://t.me/+ABC123 or https://t.me/joinchat/ABC123)
+        #[arg(long, conflicts_with = "username")]
+        link: Option<String>,
+        /// Public username (e.g., "durov" or "@durov")
+        #[arg(long, conflicts_with = "link")]
+        username: Option<String>,
+    },
+    /// Leave a group or channel
+    Leave {
+        /// Chat ID to leave
+        #[arg(long)]
+        id: i64,
+    },
+    /// Get or create invite links for a chat
+    InviteLink {
+        /// Chat ID
+        #[arg(long)]
+        id: i64,
+        /// Create a new invite link (instead of getting existing)
+        #[arg(long)]
+        create: bool,
+        /// Expiration duration for new link (e.g., "1h", "1d", "7d", "30d")
+        #[arg(long)]
+        expire: Option<String>,
+        /// Maximum number of uses for new link (0 = unlimited)
+        #[arg(long)]
+        limit: Option<i32>,
+    },
+    /// Mute notifications for a chat
+    Mute {
+        /// Chat ID to mute
+        #[arg(long)]
+        id: i64,
+        /// Mute duration (e.g., "1h", "8h", "1d", "forever")
+        #[arg(long, default_value = "forever")]
+        duration: String,
+    },
+    /// Unmute notifications for a chat
+    Unmute {
+        /// Chat ID to unmute
+        #[arg(long)]
+        id: i64,
+    },
 }
 
 #[derive(Serialize)]
@@ -574,6 +619,113 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 );
             }
         }
+        ChatsCommand::Join { link, username } => {
+            let app = App::new(cli).await?;
+            let result = app.join_chat(link.as_deref(), username.as_deref()).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "joined": true,
+                    "id": result.id,
+                    "kind": result.kind,
+                    "name": result.name,
+                }))?;
+            } else {
+                println!(
+                    "Joined {} \"{}\" (ID: {})",
+                    result.kind, result.name, result.id
+                );
+            }
+        }
+        ChatsCommand::Leave { id } => {
+            let app = App::new(cli).await?;
+            app.leave_chat(*id).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "left": true,
+                    "chat_id": id,
+                }))?;
+            } else {
+                println!("Left chat {}", id);
+            }
+        }
+        ChatsCommand::InviteLink {
+            id,
+            create,
+            expire,
+            limit,
+        } => {
+            let app = App::new(cli).await?;
+
+            if *create {
+                // Parse expire duration
+                let expire_date = if let Some(exp) = expire {
+                    Some(parse_expire_duration(exp)?)
+                } else {
+                    None
+                };
+
+                let result = app.create_invite_link(*id, expire_date, *limit).await?;
+
+                if cli.json {
+                    out::write_json(&serde_json::json!({
+                        "created": true,
+                        "link": result.link,
+                        "expire_date": result.expire_date,
+                        "usage_limit": result.usage_limit,
+                    }))?;
+                } else {
+                    println!("Invite link: {}", result.link);
+                    if let Some(exp) = result.expire_date {
+                        println!("Expires: {}", exp);
+                    }
+                    if let Some(lim) = result.usage_limit {
+                        println!("Usage limit: {}", lim);
+                    }
+                }
+            } else {
+                let link = app.get_invite_link(*id).await?;
+
+                if cli.json {
+                    out::write_json(&serde_json::json!({
+                        "link": link,
+                    }))?;
+                } else {
+                    println!("Invite link: {}", link);
+                }
+            }
+        }
+        ChatsCommand::Mute { id, duration } => {
+            let app = App::new(cli).await?;
+            let mute_until = parse_mute_duration(duration)?;
+            app.mute_chat(*id, mute_until).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "muted": true,
+                    "chat_id": id,
+                    "until": if mute_until == i32::MAX { "forever".to_string() } else { mute_until.to_string() },
+                }))?;
+            } else if mute_until == i32::MAX {
+                println!("Muted chat {} forever", id);
+            } else {
+                println!("Muted chat {} until {}", id, mute_until);
+            }
+        }
+        ChatsCommand::Unmute { id } => {
+            let app = App::new(cli).await?;
+            app.unmute_chat(*id).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "unmuted": true,
+                    "chat_id": id,
+                }))?;
+            } else {
+                println!("Unmuted chat {}", id);
+            }
+        }
     }
     Ok(())
 }
@@ -603,6 +755,50 @@ fn parse_ban_duration(duration: &str) -> Result<i32> {
     } else {
         // Try parsing as seconds
         duration.parse::<i64>()?
+    };
+
+    Ok((now.timestamp() + secs) as i32)
+}
+
+/// Parse mute duration string to Unix timestamp (i32::MAX = forever)
+fn parse_mute_duration(duration: &str) -> Result<i32> {
+    if duration == "forever" {
+        return Ok(i32::MAX);
+    }
+
+    let now = chrono::Utc::now();
+    let secs = if duration.ends_with('d') {
+        duration
+            .trim_end_matches('d')
+            .parse::<i64>()
+            .map(|d| d * 86400)?
+    } else if duration.ends_with('h') {
+        duration
+            .trim_end_matches('h')
+            .parse::<i64>()
+            .map(|h| h * 3600)?
+    } else {
+        anyhow::bail!("Invalid duration format. Use '1h', '8h', '1d', or 'forever'");
+    };
+
+    Ok((now.timestamp() + secs) as i32)
+}
+
+/// Parse expire duration string to Unix timestamp
+fn parse_expire_duration(duration: &str) -> Result<i32> {
+    let now = chrono::Utc::now();
+    let secs = if duration.ends_with('d') {
+        duration
+            .trim_end_matches('d')
+            .parse::<i64>()
+            .map(|d| d * 86400)?
+    } else if duration.ends_with('h') {
+        duration
+            .trim_end_matches('h')
+            .parse::<i64>()
+            .map(|h| h * 3600)?
+    } else {
+        anyhow::bail!("Invalid duration format. Use '1h', '1d', '7d', '30d'");
     };
 
     Ok((now.timestamp() + secs) as i32)
