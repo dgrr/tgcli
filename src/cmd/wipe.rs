@@ -8,10 +8,6 @@ use std::path::PathBuf;
 
 #[derive(Args, Debug, Clone)]
 pub struct WipeArgs {
-    /// Also delete the media directory
-    #[arg(long)]
-    pub media: bool,
-
     /// Skip confirmation prompt
     #[arg(long, short = 'y')]
     pub yes: bool,
@@ -20,47 +16,26 @@ pub struct WipeArgs {
 pub async fn run(cli: &Cli, args: &WipeArgs) -> Result<()> {
     let store_dir = cli.store_dir();
     let db_path = PathBuf::from(&store_dir).join("tgcli.db");
-    let media_path = PathBuf::from(&store_dir).join("media");
 
-    let db_exists = db_path.exists();
-    let media_exists = args.media && media_path.exists();
-
-    if !db_exists && !media_exists {
+    if !db_path.exists() {
         if cli.json {
             out::write_json(&serde_json::json!({
                 "wiped": false,
-                "reason": "nothing to wipe"
+                "reason": "database does not exist"
             }))?;
         } else {
-            println!("Nothing to wipe.");
+            println!("Nothing to wipe (tgcli.db does not exist).");
         }
         return Ok(());
     }
 
-    // Get sizes for display
-    let db_size = if db_exists {
-        fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0)
-    } else {
-        0
-    };
-
-    let media_size = if media_exists {
-        dir_size(&media_path).unwrap_or(0)
-    } else {
-        0
-    };
+    // Get size for display
+    let db_size = fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
 
     // Show what will be deleted and confirm
     if !cli.json && !args.yes {
-        println!("This will delete:");
-        if db_exists {
-            println!("  - tgcli.db ({})", format_size(db_size));
-        }
-        if media_exists {
-            println!("  - media/ directory ({})", format_size(media_size));
-        }
-        println!();
-        println!("Session will be preserved (session.db).");
+        println!("This will delete tgcli.db ({}).", format_size(db_size));
+        println!("Session and media will be preserved.");
         println!();
         print!("Are you sure? [y/N] ");
         io::stdout().flush()?;
@@ -75,57 +50,25 @@ pub async fn run(cli: &Cli, args: &WipeArgs) -> Result<()> {
         }
     }
 
-    // Perform deletion
-    let mut deleted_db = false;
-    let mut deleted_media = false;
+    // Delete database
+    fs::remove_file(&db_path)?;
 
-    if db_exists {
-        fs::remove_file(&db_path)?;
-        deleted_db = true;
-    }
-
-    if media_exists {
-        fs::remove_dir_all(&media_path)?;
-        deleted_media = true;
-    }
+    // Also remove WAL/SHM files if present
+    let wal_path = PathBuf::from(&store_dir).join("tgcli.db-wal");
+    let shm_path = PathBuf::from(&store_dir).join("tgcli.db-shm");
+    let _ = fs::remove_file(&wal_path);
+    let _ = fs::remove_file(&shm_path);
 
     if cli.json {
         out::write_json(&serde_json::json!({
             "wiped": true,
-            "deleted": {
-                "database": deleted_db,
-                "database_size": db_size,
-                "media": deleted_media,
-                "media_size": media_size
-            }
+            "deleted_size": db_size
         }))?;
     } else {
-        println!("Wiped:");
-        if deleted_db {
-            println!("  - tgcli.db ({})", format_size(db_size));
-        }
-        if deleted_media {
-            println!("  - media/ directory ({})", format_size(media_size));
-        }
+        println!("Wiped tgcli.db ({}).", format_size(db_size));
     }
 
     Ok(())
-}
-
-fn dir_size(path: &PathBuf) -> Result<u64> {
-    let mut total = 0;
-    if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                total += dir_size(&path)?;
-            } else {
-                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
-            }
-        }
-    }
-    Ok(total)
 }
 
 fn format_size(bytes: u64) -> String {
