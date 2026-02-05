@@ -10,6 +10,10 @@ pub struct SyncArgs {
     #[arg(long, default_value_t = false)]
     pub full: bool,
 
+    /// Local-only sync: skip fetching dialogs from Telegram, only sync chats already in local DB
+    #[arg(long, default_value_t = false)]
+    pub local_only: bool,
+
     /// Download media files
     #[arg(long, default_value_t = false)]
     pub download_media: bool,
@@ -72,6 +76,7 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
         show_progress: !args.no_progress,
         incremental,
         messages_per_chat: args.messages_per_chat,
+        local_only: args.local_only,
     };
 
     let result = app.sync(opts).await?;
@@ -82,10 +87,17 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             "messages_stored": result.messages_stored,
             "chats_stored": result.chats_stored,
             "incremental": incremental,
+            "local_only": args.local_only,
             "per_chat": result.per_chat,
         }))?;
     } else if args.quiet {
-        let mode_str = if incremental { "incremental" } else { "full" };
+        let mode_str = if args.local_only {
+            "local-only"
+        } else if incremental {
+            "incremental"
+        } else {
+            "full"
+        };
         eprintln!(
             "Sync complete ({}). Messages: {}, Chats: {}",
             mode_str, result.messages_stored, result.chats_stored

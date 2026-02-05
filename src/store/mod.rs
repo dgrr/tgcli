@@ -453,6 +453,25 @@ impl Store {
         }
     }
 
+    /// List all chats that have a last_sync_message_id checkpoint set.
+    /// Used for --local-only sync to skip iter_dialogs().
+    pub async fn list_chats_with_checkpoint(&self) -> Result<Vec<Chat>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id 
+                 FROM chats WHERE last_sync_message_id IS NOT NULL 
+                 ORDER BY last_message_ts DESC",
+                (),
+            )
+            .await?;
+        let mut chats = Vec::new();
+        while let Some(row) = rows.next().await? {
+            chats.push(row_to_chat(&row)?);
+        }
+        Ok(chats)
+    }
+
     /// Update the last sync message ID for a chat.
     /// Only updates if new_id is higher than the current value.
     pub async fn update_last_sync_message_id(&self, chat_id: i64, new_id: i64) -> Result<()> {
