@@ -748,10 +748,10 @@ impl App {
                 // Output based on mode
                 match opts.output {
                     OutputMode::Text => {
-                        let from_label = if msg.from_me {
+                        let sender_label = if msg.from_me {
                             "me".to_string()
                         } else {
-                            msg.sender_id.to_string()
+                            format!("user:{}", msg.sender_id)
                         };
                         let short_text = msg.text.replace('\n', " ");
                         let short_text = if short_text.len() > 100 {
@@ -765,10 +765,9 @@ impl App {
                         } else {
                             short_text
                         };
-                        println!(
-                            "from={} chat={} id={} text={}",
-                            from_label, result.chat_id, msg.id, short_text
-                        );
+                        let timestamp = msg.ts.format("%Y-%m-%d %H:%M");
+                        println!("[{}] {}: {}", result.chat_name, sender_label, short_text);
+                        println!("[{}]", timestamp);
                     }
                     OutputMode::Json => {
                         let obj = serde_json::json!({
