@@ -111,7 +111,14 @@ impl App {
                         };
                         let short_text = text.replace('\n', " ");
                         let short_text = if short_text.len() > 100 {
-                            format!("{}…", &short_text[..100])
+                            // Find the last valid char boundary at or before byte 100
+                            let truncate_at = short_text
+                                .char_indices()
+                                .take_while(|(i, _)| *i < 100)
+                                .last()
+                                .map(|(i, c)| i + c.len_utf8())
+                                .unwrap_or(0);
+                            format!("{}…", &short_text[..truncate_at])
                         } else {
                             short_text
                         };
