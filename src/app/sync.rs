@@ -488,21 +488,18 @@ impl App {
             }
 
             // Try to resolve peer from session or stored access_hash (no API call)
-            let peer_ref = match self.resolve_peer_from_session(
-                chat.id,
-                &chat.kind,
-                chat.access_hash,
-            ) {
-                Some(p) => p,
-                None => {
-                    log::debug!(
+            let peer_ref =
+                match self.resolve_peer_from_session(chat.id, &chat.kind, chat.access_hash) {
+                    Some(p) => p,
+                    None => {
+                        log::debug!(
                         "Skipping chat {} ({}) - not in session cache and no stored access_hash",
                         chat.name,
                         chat.id
                     );
-                    continue;
-                }
-            };
+                        continue;
+                    }
+                };
 
             chats_processed += 1;
 
