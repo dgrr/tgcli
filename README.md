@@ -123,6 +123,12 @@ tgcli --store ~/.tgcli-work sync
 tgcli --store ~/.tgcli-personal sync
 ```
 
+Reset local database (keeps session):
+```bash
+tgcli wipe        # Asks for confirmation
+tgcli wipe --yes  # Skip confirmation
+```
+
 ## Shell Completions
 
 ```bash

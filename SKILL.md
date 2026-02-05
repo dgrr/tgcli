@@ -127,6 +127,8 @@ tgcli polls create --chat <id> --question "?" --option "A" --option "B"
 tgcli profile show                           # Show your profile
 tgcli profile set --first-name "Name"        # Update profile
 tgcli completions bash                       # Generate shell completions
+tgcli wipe                                   # Reset database (keeps session)
+tgcli wipe --yes                             # Skip confirmation
 ```
 
 ## Multi-Account
