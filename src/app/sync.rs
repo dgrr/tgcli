@@ -23,6 +23,7 @@ pub enum OutputMode {
 
 pub struct SyncOptions {
     pub output: OutputMode,
+    #[allow(dead_code)]
     pub mark_read: bool,
     pub download_media: bool,
     pub ignore_chat_ids: Vec<i64>,

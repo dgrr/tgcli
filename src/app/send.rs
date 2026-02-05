@@ -815,6 +815,7 @@ impl App {
     /// Fetches messages older than `offset_id` (going backwards in time).
     /// If `offset_id` is None, fetches from the latest messages.
     /// Returns the number of new messages fetched and stored.
+    #[allow(dead_code)]
     pub async fn backfill_messages(
         &self,
         chat_id: i64,
@@ -2080,6 +2081,7 @@ impl App {
     }
 
     /// Mark messages up to a specific message ID as read.
+    #[allow(dead_code)]
     pub async fn mark_read_up_to(&self, chat_id: i64, max_id: i64) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         let input_peer: tl::enums::InputPeer = peer_ref.into();

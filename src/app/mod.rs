@@ -16,6 +16,7 @@ pub struct App {
     pub store_dir: String,
     #[allow(dead_code)]
     pub json: bool,
+    #[allow(dead_code)]
     pub updates_rx: Option<mpsc::UnboundedReceiver<UpdatesLike>>,
 }
 
