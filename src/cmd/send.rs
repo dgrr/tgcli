@@ -3,6 +3,7 @@ use crate::out;
 use crate::Cli;
 use anyhow::Result;
 use clap::Args;
+use std::path::PathBuf;
 
 #[derive(Args, Debug, Clone)]
 pub struct SendArgs {
@@ -10,13 +11,17 @@ pub struct SendArgs {
     #[arg(long)]
     pub to: i64,
 
-    /// Message text (required unless --sticker is provided)
-    #[arg(long, required_unless_present = "sticker")]
+    /// Message text (required unless --sticker or media is provided)
+    #[arg(long, required_unless_present_any = ["sticker", "photo", "video", "file", "voice"])]
     pub message: Option<String>,
 
     /// Sticker file_id (from `tgcli stickers show --pack <pack>`)
-    #[arg(long, conflicts_with = "message")]
+    #[arg(long, conflicts_with_all = ["message", "photo", "video", "file", "voice"])]
     pub sticker: Option<String>,
+
+    /// Send a photo (path to image file)
+    #[arg(long, conflicts_with_all = ["sticker", "video", "file", "voice"])]
+    pub photo: Option<PathBuf>,
 
     /// Forum topic ID (for sending to a specific topic in a forum/supergroup)
     #[arg(long)]
@@ -25,6 +30,10 @@ pub struct SendArgs {
     /// Reply to a specific message ID
     #[arg(long)]
     pub reply_to: Option<i32>,
+
+    /// Caption for media (photo, video, file, voice)
+    #[arg(long)]
+    pub caption: Option<String>,
 }
 
 pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
@@ -48,6 +57,28 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
             }))?;
         } else {
             println!("Sticker sent to {}", args.to);
+        }
+        return Ok(());
+    }
+
+    // Handle photo sending
+    if let Some(ref photo_path) = args.photo {
+        if args.topic.is_some() {
+            anyhow::bail!("--topic is not supported with --photo yet");
+        }
+        let mut app = App::new(cli).await?;
+        let caption = args.caption.as_deref().unwrap_or("");
+        let msg_id = app.send_photo(args.to, photo_path, caption).await?;
+
+        if cli.json {
+            out::write_json(&serde_json::json!({
+                "sent": true,
+                "to": args.to,
+                "id": msg_id,
+                "type": "photo",
+            }))?;
+        } else {
+            println!("Photo sent to {}", args.to);
         }
         return Ok(());
     }

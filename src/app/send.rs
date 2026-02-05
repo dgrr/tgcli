@@ -7,6 +7,7 @@ use grammers_client::InputMessage;
 use grammers_session::defs::PeerRef;
 use grammers_tl_types as tl;
 use rand::Rng;
+use std::path::Path;
 
 /// Decode a file_id string back to its components.
 /// Returns (doc_id, access_hash, file_reference)
@@ -413,6 +414,50 @@ impl App {
                 text: String::new(),
                 media_type: Some("sticker".to_string()),
                 media_path: None,
+                reply_to_id: None,
+                topic_id: None,
+            })
+            .await?;
+
+        // Update chat's last_message_ts
+        self.store
+            .upsert_chat(chat_id, "user", "", None, Some(now), false)
+            .await?;
+
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a photo to a chat by ID, returns the message ID.
+    pub async fn send_photo(
+        &mut self,
+        chat_id: i64,
+        path: &Path,
+        caption: &str,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        // Upload the file
+        let uploaded = self.tg.client.upload_file(path).await?;
+
+        // Send as photo with caption
+        let msg = self
+            .tg
+            .client
+            .send_message(peer_ref, InputMessage::new().text(caption).photo(uploaded))
+            .await?;
+
+        let now = Utc::now();
+        self.store
+            .upsert_message(UpsertMessageParams {
+                id: msg.id() as i64,
+                chat_id,
+                sender_id: 0,
+                ts: now,
+                edit_ts: None,
+                from_me: true,
+                text: caption.to_string(),
+                media_type: Some("photo".to_string()),
+                media_path: Some(path.to_string_lossy().to_string()),
                 reply_to_id: None,
                 topic_id: None,
             })
