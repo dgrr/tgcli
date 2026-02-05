@@ -40,6 +40,8 @@ pub struct SyncOptions {
     pub incremental: bool,
     pub messages_per_chat: usize,
     pub concurrency: usize,
+    /// If set, only sync this specific chat
+    pub chat_filter: Option<i64>,
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -603,9 +605,16 @@ impl App {
         let all_chats = self.store.list_chats_with_checkpoint().await?;
 
         // Filter chats to process
+        let chat_filter = opts.chat_filter;
         let chats_to_sync: Vec<_> = all_chats
             .into_iter()
             .filter(|chat| {
+                // If chat_filter is set, only include that specific chat
+                if let Some(filter_id) = chat_filter {
+                    if chat.id != filter_id {
+                        return false;
+                    }
+                }
                 if ignore_set.contains(&chat.id) {
                     return false;
                 }

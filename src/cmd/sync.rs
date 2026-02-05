@@ -59,6 +59,10 @@ pub enum SyncCommand {
     Msgs {
         #[command(flatten)]
         common: CommonSyncArgs,
+
+        /// Sync only this specific chat (by chat ID)
+        #[arg(long, value_name = "CHAT_ID")]
+        chat: Option<i64>,
     },
 }
 
@@ -97,6 +101,7 @@ fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions 
         incremental: true, // Always incremental
         messages_per_chat: common.messages_per_chat,
         concurrency: common.concurrency,
+        chat_filter: None,
     }
 }
 
@@ -188,10 +193,11 @@ pub async fn run(cli: &Cli, args: &SyncArgs) -> Result<()> {
             let result = app.sync_chats(opts).await?;
             print_sync_result(common, &result, "chats-only");
         }
-        Some(SyncCommand::Msgs { common }) => {
+        Some(SyncCommand::Msgs { common, chat }) => {
             // Sync messages only from local chats (uses stored access_hash, no iter_dialogs)
             let mut app = App::new(cli).await?;
-            let opts = build_sync_options(common);
+            let mut opts = build_sync_options(common);
+            opts.chat_filter = *chat;
             let result = app.sync_msgs(opts).await?;
             print_sync_result(common, &result, "msgs-only");
         }
