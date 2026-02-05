@@ -26,38 +26,64 @@ cp target/release/tgcli /usr/local/bin/
 ## Features
 
 - **Auth**: Phone → code → 2FA authentication
-- **Sync**: Bootstrap + live updates, stored in libSQL (turso) with FTS5
-- **Chats**: List and show chats from local DB
-- **Messages**: List, search (FTS5), context view, show
-- **Send**: Text messages (direct or via Unix socket IPC)
-- **Contacts**: Search and show from local DB
+- **Sync**: Incremental sync with checkpoints, stored in libSQL (turso) with FTS5
+- **Chats**: List, search, create, join/leave, archive, pin, mute
+- **Messages**: List, search (FTS5 + global API), send, edit, delete, forward, download
+- **Contacts**: List and search from local DB
+- **Admin**: Ban, kick, promote, demote group members
 - **Read**: Mark messages as read
+- **Stickers**: List, search, send stickers
+- **Polls**: Create polls
+- **Profile**: Show and update your profile
+- **Folders**: Create and manage chat folders
 - **Output**: Human-readable tables or `--json`
 
 ## Quick Start
 
 ```bash
-# Build (no system dependencies needed!)
-cargo build --release
-
-# Or with just
-just build
-just install  # copies to /opt/homebrew/bin
-
 # Authenticate
 tgcli auth
 
-# Sync messages
-tgcli sync --once
+# Sync messages (incremental by default)
+tgcli sync
+
+# Full sync (first time or refresh)
+tgcli sync --full
 
 # List chats
 tgcli chats list
 
-# Search messages
+# Search messages locally (FTS5)
 tgcli messages search "hello"
+
+# Search messages globally (Telegram API)
+tgcli messages search --global "hello"
 
 # Send a message
 tgcli send --to <chat_id> --message "Hello!"
+
+# Download media from a message
+tgcli messages download --chat <chat_id> --message <msg_id>
+```
+
+## Sync Behavior
+
+- **First run**: Fetches all chats + last 50 messages per chat (configurable with `--messages-per-chat`)
+- **Subsequent runs**: Pure incremental sync — only fetches new messages since last checkpoint
+- **`--full`**: Forces a full sync, ignoring checkpoints
+
+```bash
+# Default incremental sync
+tgcli sync
+
+# Full sync with 100 messages per chat
+tgcli sync --full --messages-per-chat 100
+
+# Sync with progress suppressed
+tgcli sync --no-progress
+
+# Output as JSONL stream
+tgcli sync --stream
 ```
 
 ## Architecture
@@ -67,19 +93,22 @@ src/
   main.rs          CLI entry point (clap)
   cmd/             Command handlers
     auth.rs        Phone → code → 2FA
-    sync.rs        Bootstrap + live sync daemon
-    chats.rs       List/show chats
-    messages.rs    List/search/context/show messages
-    send.rs        Send text messages
-    contacts.rs    Search/show contacts
+    sync.rs        Incremental/full sync
+    chats.rs       List/search/create/join/leave/archive/pin/mute
+    messages.rs    List/search/send/edit/delete/forward/download
+    send.rs        Send text/files/voice/video
+    contacts.rs    List/search contacts
     read.rs        Mark as read
-    version.rs     Version info
+    stickers.rs    List/search/send stickers
+    polls.rs       Create polls
+    profile.rs     Show/update profile
+    folders.rs     Create/delete folders
+    users.rs       Show/block/unblock users
+    typing.rs      Send typing indicator
+    completions.rs Shell completions
   store/           turso (libSQL) + FTS5 storage
   tg/              grammers client wrapper
   app/             App struct + business logic
-    sync.rs        Sync logic
-    send.rs        Send logic
-    socket.rs      Unix socket IPC
   out/             Output formatting
 ```
 
@@ -87,17 +116,31 @@ src/
 
 - Session: `~/.tgcli/session.db` (grammers SqliteSession)
 - Data: `~/.tgcli/tgcli.db` (chats, contacts, messages + FTS5)
-- Socket: `~/.tgcli/tgcli.sock` (IPC for concurrent send during sync)
+
+Multi-account support via `--store`:
+```bash
+tgcli --store ~/.tgcli-work sync
+tgcli --store ~/.tgcli-personal sync
+```
+
+## Shell Completions
+
+```bash
+# Bash
+tgcli completions bash > /etc/bash_completion.d/tgcli
+
+# Zsh
+tgcli completions zsh > ~/.zfunc/_tgcli
+
+# Fish
+tgcli completions fish > ~/.config/fish/completions/tgcli.fish
+```
 
 ## Why Rust?
 
 The Go version (`tgcli-go`) uses TDLib (C++), requiring complex cross-compilation and system dependencies. `tgcli` is pure Rust — zero C/C++ deps, single `cargo build`, tiny binary.
 
 Uses [turso](https://github.com/tursodatabase/libsql) for database storage — a pure Rust libSQL implementation with no native compilation required.
-
-## See Also
-
-- **[tgcli-go](https://github.com/dgrr/tgcli-go)** - Go/TDLib version (more features, requires TDLib)
 
 ## License
 
