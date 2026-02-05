@@ -494,6 +494,39 @@ impl App {
                                     let result = self.backfill_messages(chat_id, None, oldest_id, limit).await;
                                     let _ = response_tx.send(result.map_err(|e| e.to_string()));
                                 }
+                                crate::app::socket::SocketCommand::Read { chat_id, topic_id, all_topics, response_tx } => {
+                                    log::info!("Socket read request: chat_id={}, topic_id={:?}, all_topics={}", chat_id, topic_id, all_topics);
+                                    let result = if all_topics {
+                                        // Mark all topics as read
+                                        match self.mark_read_all_topics(chat_id).await {
+                                            Ok(count) => Ok(crate::app::socket::ReadResult {
+                                                marked_read: true,
+                                                topics_count: Some(count),
+                                            }),
+                                            Err(e) => Err(e.to_string()),
+                                        }
+                                    } else {
+                                        // Mark chat or specific topic as read
+                                        match self.mark_read(chat_id, topic_id).await {
+                                            Ok(()) => Ok(crate::app::socket::ReadResult {
+                                                marked_read: true,
+                                                topics_count: None,
+                                            }),
+                                            Err(e) => Err(e.to_string()),
+                                        }
+                                    };
+                                    let _ = response_tx.send(result);
+                                }
+                                crate::app::socket::SocketCommand::Sync { limit, response_tx } => {
+                                    log::info!("Socket sync request: limit={}", limit);
+                                    let result = self.sync_dialogs(limit).await;
+                                    let _ = response_tx.send(result.map_err(|e| e.to_string()));
+                                }
+                                crate::app::socket::SocketCommand::Stop { response_tx } => {
+                                    log::info!("Socket stop request received");
+                                    let _ = response_tx.send(Ok(()));
+                                    break; // Exit the loop to shutdown
+                                }
                             }
                         }
                         // Handle idle timeout
@@ -744,6 +777,122 @@ impl App {
         Ok(SyncResult {
             messages_stored,
             chats_stored,
+        })
+    }
+
+    /// Re-sync dialogs from Telegram (used by socket RPC).
+    /// Returns counts of chats and messages synced.
+    pub async fn sync_dialogs(
+        &self,
+        messages_per_chat: usize,
+    ) -> Result<crate::app::socket::SyncResult> {
+        let mut messages_stored: u64 = 0;
+        let mut chats_stored: u64 = 0;
+
+        let client = &self.tg.client;
+
+        let mut dialogs = client.iter_dialogs();
+        while let Some(dialog) = dialogs
+            .next()
+            .await
+            .context("Failed to fetch dialogs from Telegram")?
+        {
+            let peer = dialog.peer();
+            let (kind, name, username, is_forum) = peer_info(peer);
+            let id = peer.id().bare_id();
+
+            self.store
+                .upsert_chat(id, &kind, &name, username.as_deref(), None, is_forum)
+                .await?;
+            chats_stored += 1;
+
+            // Also store as contact if it's a user
+            if let Peer::User(ref user) = peer {
+                self.store
+                    .upsert_contact(
+                        user.bare_id(),
+                        user.username(),
+                        user.first_name().unwrap_or(""),
+                        user.last_name().unwrap_or(""),
+                        user.phone().unwrap_or(""),
+                    )
+                    .await?;
+            }
+
+            // Fetch recent messages for this chat
+            let peer_ref = PeerRef::from(peer);
+            let mut message_iter = client.iter_messages(peer_ref);
+            let mut count = 0;
+            let mut latest_ts: Option<DateTime<Utc>> = None;
+
+            while let Some(msg) = message_iter
+                .next()
+                .await
+                .with_context(|| format!("Failed to fetch messages for chat {} ({})", name, id))?
+            {
+                if count >= messages_per_chat {
+                    break;
+                }
+                count += 1;
+
+                let msg_ts = msg.date();
+                if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
+                    latest_ts = Some(msg_ts);
+                }
+
+                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let from_me = msg.outgoing();
+                let text = msg.text().to_string();
+                let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+                let topic_id = if is_forum {
+                    extract_topic_id(&msg)
+                } else {
+                    None
+                };
+                let media_type = msg.media().map(|_| "media".to_string());
+
+                self.store
+                    .upsert_message(UpsertMessageParams {
+                        id: msg.id() as i64,
+                        chat_id: id,
+                        sender_id,
+                        ts: msg_ts,
+                        edit_ts: msg.edit_date(),
+                        from_me,
+                        text,
+                        media_type,
+                        media_path: None,
+                        reply_to_id,
+                        topic_id,
+                    })
+                    .await?;
+                messages_stored += 1;
+            }
+
+            // Update chat's last_message_ts
+            if let Some(ts) = latest_ts {
+                self.store
+                    .upsert_chat(id, &kind, &name, username.as_deref(), Some(ts), is_forum)
+                    .await?;
+            }
+
+            // If it's a forum, sync topics
+            if is_forum {
+                if let Ok(topic_count) = self.sync_topics(id).await {
+                    log::info!("Synced {} topics for forum chat {}", topic_count, id);
+                }
+            }
+        }
+
+        log::info!(
+            "Socket sync complete: {} chats, {} messages",
+            chats_stored,
+            messages_stored
+        );
+
+        Ok(crate::app::socket::SyncResult {
+            chats: chats_stored,
+            messages: messages_stored,
         })
     }
 }

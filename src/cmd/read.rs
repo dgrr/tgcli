@@ -55,7 +55,7 @@ pub async fn run(cli: &Cli, args: &ReadArgs) -> Result<()> {
     }
 
     // Fallback: direct connection
-    let mut app = App::new(cli).await?;
+    let app = App::new(cli).await?;
 
     if args.all_topics {
         // Mark all topics as read

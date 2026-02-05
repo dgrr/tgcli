@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use turso::{Builder, Connection, Database, Row};
 
@@ -9,7 +9,7 @@ pub struct Store {
     has_fts: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chat {
     pub id: i64,
     pub kind: String,
@@ -20,7 +20,7 @@ pub struct Chat {
     pub is_forum: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Topic {
     pub chat_id: i64,
     pub topic_id: i32,
@@ -29,7 +29,7 @@ pub struct Topic {
     pub icon_emoji: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contact {
     pub user_id: i64,
     pub username: Option<String>,
@@ -38,7 +38,7 @@ pub struct Contact {
     pub phone: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: i64,
     pub chat_id: i64,

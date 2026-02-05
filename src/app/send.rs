@@ -436,7 +436,7 @@ impl App {
     }
 
     /// Mark a chat (or topic in a forum) as read.
-    pub async fn mark_read(&mut self, chat_id: i64, topic_id: Option<i32>) -> Result<()> {
+    pub async fn mark_read(&self, chat_id: i64, topic_id: Option<i32>) -> Result<()> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
 
         if let Some(tid) = topic_id {
