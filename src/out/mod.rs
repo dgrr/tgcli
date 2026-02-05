@@ -18,13 +18,23 @@ pub fn write_error_json(err: &anyhow::Error) -> Result<()> {
     Ok(())
 }
 
-/// Truncate a string to the given max length with ellipsis.
+/// Truncate a string to the given max *character* length with ellipsis.
+/// Handles multi-byte UTF-8 characters (emojis, etc.) safely.
 pub fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    let char_count = s.chars().count();
+    if char_count <= max {
         s.to_string()
-    } else if max > 3 {
-        format!("{}…", &s[..max - 1])
+    } else if max > 1 {
+        // Find the byte index of the (max-1)th character boundary
+        let end_idx = s
+            .char_indices()
+            .nth(max - 1)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+        format!("{}…", &s[..end_idx])
+    } else if max == 1 {
+        "…".to_string()
     } else {
-        s[..max].to_string()
+        String::new()
     }
 }
