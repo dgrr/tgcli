@@ -1,3 +1,4 @@
+use crate::app::App;
 use crate::out;
 use crate::store::{self, Store};
 use crate::Cli;
@@ -73,6 +74,18 @@ pub enum MessagesCommand {
         /// Message ID
         #[arg(long)]
         id: i64,
+    },
+    /// Delete messages from a chat
+    Delete {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID(s) to delete (repeatable)
+        #[arg(long = "id", value_name = "MSG_ID")]
+        ids: Vec<i64>,
+        /// Delete for all members (default true, note: always true for channels)
+        #[arg(long, default_value = "true")]
+        revoke: bool,
     },
 }
 
@@ -239,6 +252,33 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 None => {
                     anyhow::bail!("Message {}/{} not found", chat, id);
                 }
+            }
+        }
+        MessagesCommand::Delete { chat, ids, revoke } => {
+            if ids.is_empty() {
+                anyhow::bail!("At least one --id is required");
+            }
+
+            // Delete requires network access
+            let app = App::new(cli).await?;
+
+            let deleted = app.delete_messages(*chat, ids, *revoke).await?;
+
+            if cli.json {
+                out::write_json(&serde_json::json!({
+                    "deleted": true,
+                    "chat_id": chat,
+                    "message_ids": ids,
+                    "affected_count": deleted,
+                    "revoke": revoke,
+                }))?;
+            } else {
+                println!(
+                    "Deleted {} message(s) from chat {} (affected: {})",
+                    ids.len(),
+                    chat,
+                    deleted
+                );
             }
         }
     }
