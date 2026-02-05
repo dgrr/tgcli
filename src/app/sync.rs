@@ -437,14 +437,18 @@ impl App {
             eprintln!("Listening for updates (Ctrl+C to stop)…");
 
             // Start socket server if requested
+            let (socket_cmd_tx, mut socket_cmd_rx) = crate::app::socket::command_channel();
             let _socket_handle = if opts.enable_socket {
                 let store_dir = self.store_dir.clone();
                 Some(tokio::spawn(async move {
-                    if let Err(e) = crate::app::socket::run_server(&store_dir).await {
+                    if let Err(e) = crate::app::socket::run_server(&store_dir, socket_cmd_tx).await
+                    {
                         log::error!("Socket server error: {}", e);
                     }
                 }))
             } else {
+                // Drop the sender if socket is disabled
+                drop(socket_cmd_tx);
                 None
             };
 
@@ -457,10 +461,30 @@ impl App {
                 let mut last_activity = std::time::Instant::now();
 
                 loop {
-                    let update = tokio::time::timeout(idle_duration, update_stream.next()).await;
-
+                    // Use select! to handle both updates and socket commands
+                    tokio::select! {
+                        // Handle socket commands
+                        Some(cmd) = socket_cmd_rx.recv() => {
+                            match cmd {
+                                crate::app::socket::SocketCommand::Backfill { chat_id, limit, response_tx } => {
+                                    log::info!("Socket backfill request: chat_id={}, limit={}", chat_id, limit);
+                                    // Get oldest message ID for this chat
+                                    let oldest_id = self.store.get_oldest_message_id(chat_id, None).await.ok().flatten();
+                                    // Perform backfill using existing logic
+                                    let result = self.backfill_messages(chat_id, None, oldest_id, limit).await;
+                                    let _ = response_tx.send(result.map_err(|e| e.to_string()));
+                                }
+                            }
+                        }
+                        // Handle idle timeout
+                        _ = tokio::time::sleep(idle_duration), if matches!(opts.mode, SyncMode::Once) && last_activity.elapsed() >= idle_duration => {
+                            eprintln!("Idle timeout reached, exiting.");
+                            break;
+                        }
+                        // Handle Telegram updates
+                        update = update_stream.next() => {
                     match update {
-                        Ok(Ok(update)) => {
+                        Ok(update) => {
                             last_activity = std::time::Instant::now();
                             match update {
                                 Update::NewMessage(msg) if !msg.outgoing() => {
@@ -686,18 +710,11 @@ impl App {
                                 _ => {}
                             }
                         }
-                        Ok(Err(e)) => {
+                        Err(e) => {
                             log::error!("Update error: {}", e);
                             break;
                         }
-                        Err(_) => {
-                            // Timeout
-                            if matches!(opts.mode, SyncMode::Once)
-                                && last_activity.elapsed() >= idle_duration
-                            {
-                                eprintln!("Idle timeout reached, exiting.");
-                                break;
-                            }
+                    }
                         }
                     }
                 }
