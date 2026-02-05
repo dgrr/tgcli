@@ -19,10 +19,21 @@ tgcli auth
 ### Sync
 
 ```bash
-tgcli sync                    # Incremental sync (default)
-tgcli sync --full             # Full sync
-tgcli sync --stream           # JSONL output
+tgcli sync                    # Incremental sync (shows per-chat summary)
+tgcli sync --full             # Full sync (all messages)
+tgcli sync --json             # JSON output (for LLMs)
+tgcli sync --quiet            # Suppress summary
+tgcli sync --stream           # JSONL streaming output
 tgcli sync --download-media   # Save media files
+```
+
+Default output:
+```
+Synced 3 chats:
+  Anastasia           +3 messages
+  Bloque Genesis      +12 messages
+    └ Trading         +5 messages
+    └ Hyperliquid     +3 messages
 ```
 
 ### Chats
