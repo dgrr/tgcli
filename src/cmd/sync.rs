@@ -46,6 +46,10 @@ pub struct CommonSyncArgs {
     /// Suppress summary output (just show "Sync complete")
     #[arg(long, default_value_t = false)]
     pub quiet: bool,
+
+    /// After sync, prune messages keeping only the N most recent per chat
+    #[arg(long, value_name = "N")]
+    pub prune_after: Option<usize>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -102,6 +106,7 @@ fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions 
         messages_per_chat: common.messages_per_chat,
         concurrency: common.concurrency,
         chat_filter: None,
+        prune_after: common.prune_after,
     }
 }
 
@@ -160,21 +165,37 @@ fn print_sync_result(
             );
 
             for chat in &chats_with_messages {
-                println!(
-                    "  {:<width$}  +{} {}",
-                    chat.chat_name,
-                    chat.messages_synced,
-                    plural(chat.messages_synced),
-                    width = max_name_len
-                );
-                // Show topic breakdown for forums
+                // Forum parent: show messages only (no unread)
+                // Regular chat: show messages + unread
+                if !chat.topics.is_empty() {
+                    // Forum parent line - no unread count
+                    println!(
+                        "  {:<width$}  +{} {}",
+                        chat.chat_name,
+                        chat.messages_synced,
+                        plural(chat.messages_synced),
+                        width = max_name_len
+                    );
+                } else {
+                    // Regular chat - show unread
+                    println!(
+                        "  {:<width$}  +{} {} +{} unread",
+                        chat.chat_name,
+                        chat.messages_synced,
+                        plural(chat.messages_synced),
+                        chat.unread_count,
+                        width = max_name_len
+                    );
+                }
+                // Show topic breakdown for forums - with unread count
                 for topic in &chat.topics {
                     if topic.messages_synced > 0 {
                         println!(
-                            "    └ {:<width$}  +{} {}",
+                            "    └ {:<width$}  +{} {} +{} unread",
                             topic.topic_name,
                             topic.messages_synced,
                             plural(topic.messages_synced),
+                            topic.unread_count,
                             width = max_name_len - 4
                         );
                     }

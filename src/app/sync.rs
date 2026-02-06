@@ -42,6 +42,8 @@ pub struct SyncOptions {
     pub concurrency: usize,
     /// If set, only sync this specific chat
     pub chat_filter: Option<i64>,
+    /// After sync, prune messages keeping only the N most recent per chat
+    pub prune_after: Option<usize>,
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -134,6 +136,7 @@ pub struct TopicSyncSummary {
     pub topic_id: i32,
     pub topic_name: String,
     pub messages_synced: u64,
+    pub unread_count: i32,
 }
 
 /// Summary of messages synced for a single chat
@@ -145,6 +148,8 @@ pub struct ChatSyncSummary {
     /// For forum chats, breakdown by topic
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub topics: Vec<TopicSyncSummary>,
+    /// Unread message count for this chat at sync time
+    pub unread_count: i32,
 }
 
 pub struct SyncResult {
@@ -998,18 +1003,22 @@ impl App {
                     if result.is_forum && !result.topic_counts.is_empty() {
                         let mut topic_summaries = Vec::new();
                         for (tid, msg_count) in &result.topic_counts {
-                            let topic_name = self
+                            let topic = self
                                 .store
                                 .get_topic(result.chat_id, *tid)
                                 .await
                                 .ok()
-                                .flatten()
+                                .flatten();
+                            let topic_name = topic
+                                .as_ref()
                                 .map(|t| t.name.clone())
                                 .unwrap_or_else(|| format!("Topic {}", tid));
+                            let unread_count = topic.map(|t| t.unread_count).unwrap_or(0);
                             topic_summaries.push(TopicSyncSummary {
                                 topic_id: *tid,
                                 topic_name,
                                 messages_synced: *msg_count,
+                                unread_count,
                             });
                         }
                         topic_summaries
@@ -1028,6 +1037,7 @@ impl App {
                                 .find(|t| t.topic_id == new_topic.topic_id)
                             {
                                 existing_topic.messages_synced += new_topic.messages_synced;
+                                existing_topic.unread_count = new_topic.unread_count;
                             } else {
                                 existing.topics.push(new_topic.clone());
                             }
@@ -1038,6 +1048,7 @@ impl App {
                         chat_name: result.chat_name.clone(),
                         messages_synced: result.messages.len() as u64,
                         topics: new_topics,
+                        unread_count: 0, // Not available in msgs-only sync
                     });
             }
         }
@@ -1046,6 +1057,29 @@ impl App {
             "Messages sync complete: {} chats checked, {} messages (concurrency: {})",
             chats_processed, messages_stored, concurrency
         );
+
+        // Prune old messages if --prune-after is set
+        if let Some(keep_count) = opts.prune_after {
+            if show_progress {
+                eprint!("Pruning old messages (keeping {} per chat)...", keep_count);
+            }
+            match self.store.prune_all_chats(keep_count).await {
+                Ok(deleted) => {
+                    if show_progress {
+                        eprint!("\r\x1b[K");
+                    }
+                    if deleted > 0 {
+                        eprintln!("Pruned {} old messages", deleted);
+                    }
+                }
+                Err(e) => {
+                    if show_progress {
+                        eprint!("\r\x1b[K");
+                    }
+                    log::warn!("Failed to prune messages: {}", e);
+                }
+            }
+        }
 
         // Convert HashMap to Vec and sort topics by message count descending
         let per_chat: Vec<ChatSyncSummary> = per_chat_map
@@ -1153,6 +1187,9 @@ impl App {
                     )
                     .await?;
             }
+
+            // Track unread_count for filtering output later
+            let unread_count = extract_unread_count(&dialog.raw);
 
             // Fetch messages for this chat
             let peer_ref = PeerRef::from(peer);
@@ -1347,18 +1384,17 @@ impl App {
                 let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty() {
                     let mut topic_summaries = Vec::new();
                     for (tid, msg_count) in &topic_counts {
-                        let topic_name = self
-                            .store
-                            .get_topic(id, *tid)
-                            .await
-                            .ok()
-                            .flatten()
+                        let topic = self.store.get_topic(id, *tid).await.ok().flatten();
+                        let topic_name = topic
+                            .as_ref()
                             .map(|t| t.name.clone())
                             .unwrap_or_else(|| format!("Topic {}", tid));
+                        let unread_count = topic.map(|t| t.unread_count).unwrap_or(0);
                         topic_summaries.push(TopicSyncSummary {
                             topic_id: *tid,
                             topic_name,
                             messages_synced: *msg_count,
+                            unread_count,
                         });
                     }
                     topic_summaries
@@ -1371,7 +1407,8 @@ impl App {
                     .entry(id)
                     .and_modify(|existing| {
                         existing.messages_synced += count as u64;
-                        // Merge topics by topic_id
+                        existing.unread_count = unread_count; // Update with latest unread count
+                                                              // Merge topics by topic_id
                         for new_topic in &new_topics {
                             if let Some(existing_topic) = existing
                                 .topics
@@ -1379,6 +1416,7 @@ impl App {
                                 .find(|t| t.topic_id == new_topic.topic_id)
                             {
                                 existing_topic.messages_synced += new_topic.messages_synced;
+                                existing_topic.unread_count = new_topic.unread_count;
                             } else {
                                 existing.topics.push(new_topic.clone());
                             }
@@ -1389,6 +1427,7 @@ impl App {
                         chat_name: name.clone(),
                         messages_synced: count as u64,
                         topics: new_topics,
+                        unread_count,
                     });
             }
         }
@@ -1608,18 +1647,17 @@ impl App {
                 let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty() {
                     let mut topic_summaries = Vec::new();
                     for (tid, msg_count) in &topic_counts {
-                        let topic_name = self
-                            .store
-                            .get_topic(id, *tid)
-                            .await
-                            .ok()
-                            .flatten()
+                        let topic = self.store.get_topic(id, *tid).await.ok().flatten();
+                        let topic_name = topic
+                            .as_ref()
                             .map(|t| t.name.clone())
                             .unwrap_or_else(|| format!("Topic {}", tid));
+                        let unread_count = topic.map(|t| t.unread_count).unwrap_or(0);
                         topic_summaries.push(TopicSyncSummary {
                             topic_id: *tid,
                             topic_name,
                             messages_synced: *msg_count,
+                            unread_count,
                         });
                     }
                     topic_summaries
@@ -1627,7 +1665,7 @@ impl App {
                     Vec::new()
                 };
 
-                // Aggregate into per_chat_map
+                // Aggregate into per_chat_map (archived chats don't have unread info)
                 per_chat_map
                     .entry(id)
                     .and_modify(|existing| {
@@ -1640,6 +1678,7 @@ impl App {
                                 .find(|t| t.topic_id == new_topic.topic_id)
                             {
                                 existing_topic.messages_synced += new_topic.messages_synced;
+                                existing_topic.unread_count = new_topic.unread_count;
                             } else {
                                 existing.topics.push(new_topic.clone());
                             }
@@ -1650,6 +1689,7 @@ impl App {
                         chat_name: name.clone(),
                         messages_synced: count as u64,
                         topics: new_topics,
+                        unread_count: 0, // Archived chats don't have unread info
                     });
             }
         }
@@ -1670,6 +1710,29 @@ impl App {
                 "Sync complete: {} chats, {} messages",
                 chats_stored, messages_stored
             );
+        }
+
+        // Prune old messages if --prune-after is set
+        if let Some(keep_count) = opts.prune_after {
+            if opts.show_progress {
+                eprint!("Pruning old messages (keeping {} per chat)...", keep_count);
+            }
+            match self.store.prune_all_chats(keep_count).await {
+                Ok(deleted) => {
+                    if opts.show_progress {
+                        eprint!("\r\x1b[K");
+                    }
+                    if deleted > 0 {
+                        eprintln!("Pruned {} old messages", deleted);
+                    }
+                }
+                Err(e) => {
+                    if opts.show_progress {
+                        eprint!("\r\x1b[K");
+                    }
+                    log::warn!("Failed to prune messages: {}", e);
+                }
+            }
         }
 
         // Convert HashMap to Vec and sort topics by message count descending
@@ -2003,6 +2066,14 @@ async fn download_message_media_static(
             );
             Ok((Some(media_type), None))
         }
+    }
+}
+
+/// Extract unread_count from a raw Dialog enum
+fn extract_unread_count(raw: &tl::enums::Dialog) -> i32 {
+    match raw {
+        tl::enums::Dialog::Dialog(d) => d.unread_count,
+        tl::enums::Dialog::Folder(_) => 0,
     }
 }
 

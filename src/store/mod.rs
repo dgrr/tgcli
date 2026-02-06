@@ -34,6 +34,7 @@ pub struct Topic {
     pub name: String,
     pub icon_color: i32,
     pub icon_emoji: Option<String>,
+    pub unread_count: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +231,15 @@ impl Store {
         let _ = self
             .conn
             .execute("ALTER TABLE chats ADD COLUMN access_hash INTEGER", ())
+            .await;
+
+        // Add unread_count column to topics if it doesn't exist (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE topics ADD COLUMN unread_count INTEGER DEFAULT 0",
+                (),
+            )
             .await;
 
         self.conn
@@ -529,16 +539,25 @@ impl Store {
         name: &str,
         icon_color: i32,
         icon_emoji: Option<&str>,
+        unread_count: i32,
     ) -> Result<()> {
         self.conn
             .execute(
-                "INSERT INTO topics (chat_id, topic_id, name, icon_color, icon_emoji)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO topics (chat_id, topic_id, name, icon_color, icon_emoji, unread_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(chat_id, topic_id) DO UPDATE SET
                     name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
                     icon_color = excluded.icon_color,
-                    icon_emoji = COALESCE(excluded.icon_emoji, icon_emoji)",
-                (chat_id, topic_id, name, icon_color, icon_emoji),
+                    icon_emoji = COALESCE(excluded.icon_emoji, icon_emoji),
+                    unread_count = excluded.unread_count",
+                (
+                    chat_id,
+                    topic_id,
+                    name,
+                    icon_color,
+                    icon_emoji,
+                    unread_count,
+                ),
             )
             .await?;
         Ok(())
@@ -548,7 +567,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT chat_id, topic_id, name, icon_color, icon_emoji FROM topics
+                "SELECT chat_id, topic_id, name, icon_color, icon_emoji, unread_count FROM topics
                  WHERE chat_id = ?1 ORDER BY topic_id",
                 [chat_id],
             )
@@ -564,7 +583,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT chat_id, topic_id, name, icon_color, icon_emoji FROM topics
+                "SELECT chat_id, topic_id, name, icon_color, icon_emoji, unread_count FROM topics
                  WHERE chat_id = ?1 AND topic_id = ?2",
                 (chat_id, topic_id),
             )
@@ -1106,6 +1125,61 @@ impl Store {
             Ok(None)
         }
     }
+
+    /// Prune old messages for a chat, keeping only the N most recent messages.
+    /// Returns the count of deleted messages.
+    pub async fn prune_messages(&self, chat_id: i64, keep_count: usize) -> Result<u64> {
+        // Find the message ID threshold: get the Nth most recent message ID
+        // Messages with id < threshold will be deleted
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id FROM messages WHERE chat_id = ?1 ORDER BY id DESC LIMIT 1 OFFSET ?2",
+                (chat_id, keep_count as i64),
+            )
+            .await?;
+
+        let threshold_id: Option<i64> = if let Some(row) = rows.next().await? {
+            Some(row.get(0)?)
+        } else {
+            // Fewer than keep_count messages, nothing to prune
+            return Ok(0);
+        };
+
+        if let Some(threshold) = threshold_id {
+            // Delete messages older than the threshold
+            let deleted = self
+                .conn
+                .execute(
+                    "DELETE FROM messages WHERE chat_id = ?1 AND id <= ?2",
+                    (chat_id, threshold),
+                )
+                .await?;
+            Ok(deleted)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Prune messages across all chats, keeping only N most recent per chat.
+    /// Returns total count of deleted messages.
+    pub async fn prune_all_chats(&self, keep_count: usize) -> Result<u64> {
+        // Get all chat IDs that have messages
+        let mut rows = self
+            .conn
+            .query("SELECT DISTINCT chat_id FROM messages", ())
+            .await?;
+        let mut chat_ids = Vec::new();
+        while let Some(row) = rows.next().await? {
+            chat_ids.push(row.get::<i64>(0)?);
+        }
+
+        let mut total_deleted = 0u64;
+        for chat_id in chat_ids {
+            total_deleted += self.prune_messages(chat_id, keep_count).await?;
+        }
+        Ok(total_deleted)
+    }
 }
 
 fn parse_ts(s: &str) -> DateTime<Utc> {
@@ -1144,6 +1218,7 @@ fn row_to_topic(row: &Row) -> Result<Topic> {
         name: row.get(2)?,
         icon_color: row.get(3)?,
         icon_emoji: row.get::<Option<String>>(4)?,
+        unread_count: row.get::<Option<i32>>(5)?.unwrap_or(0),
     })
 }
 

@@ -121,6 +121,7 @@ impl App {
                             &topic.title,
                             topic.icon_color,
                             icon_emoji.as_deref(),
+                            topic.unread_count,
                         )
                         .await?;
                     count += 1;
