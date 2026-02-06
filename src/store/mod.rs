@@ -25,6 +25,9 @@ pub struct Chat {
     /// Peer access_hash for constructing InputPeer without session cache
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_hash: Option<i64>,
+    /// Whether this chat is in the Archive folder
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +245,15 @@ impl Store {
             )
             .await;
 
+        // Add archived column to chats if it doesn't exist (migration for existing DBs)
+        let _ = self
+            .conn
+            .execute(
+                "ALTER TABLE chats ADD COLUMN archived INTEGER DEFAULT 0",
+                (),
+            )
+            .await;
+
         self.conn
             .execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts)",
@@ -380,13 +392,15 @@ impl Store {
         last_message_ts: Option<DateTime<Utc>>,
         is_forum: bool,
         access_hash: Option<i64>,
+        archived: bool,
     ) -> Result<()> {
         let ts_str = last_message_ts.map(|t| t.to_rfc3339());
         let is_forum_int = is_forum as i64;
+        let archived_int = archived as i64;
         self.conn
             .execute(
-                "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum, access_hash)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum, access_hash, archived)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET
                     kind = COALESCE(excluded.kind, kind),
                     name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
@@ -394,39 +408,49 @@ impl Store {
                     last_message_ts = CASE WHEN excluded.last_message_ts IS NOT NULL AND (excluded.last_message_ts > last_message_ts OR last_message_ts IS NULL)
                         THEN excluded.last_message_ts ELSE last_message_ts END,
                     is_forum = CASE WHEN excluded.is_forum = 1 THEN 1 ELSE is_forum END,
-                    access_hash = COALESCE(excluded.access_hash, access_hash)",
-                (id, kind, name, username, ts_str, is_forum_int, access_hash),
+                    access_hash = COALESCE(excluded.access_hash, access_hash),
+                    archived = excluded.archived",
+                (id, kind, name, username, ts_str, is_forum_int, access_hash, archived_int),
             )
             .await?;
         Ok(())
     }
 
-    pub async fn list_chats(&self, query: Option<&str>, limit: i64) -> Result<Vec<Chat>> {
+    pub async fn list_chats(
+        &self,
+        query: Option<&str>,
+        limit: i64,
+        archived_only: Option<bool>,
+    ) -> Result<Vec<Chat>> {
         let mut chats = Vec::new();
+
+        // Build archived filter clause
+        let archived_clause = match archived_only {
+            Some(true) => " AND archived = 1",
+            Some(false) => " AND archived = 0",
+            None => "",
+        };
 
         if let Some(q) = query {
             let pattern = format!("%{}%", q);
-            let mut rows = self
-                .conn
-                .query(
-                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash FROM chats
-                     WHERE name LIKE ?1 OR username LIKE ?1
-                     ORDER BY last_message_ts DESC LIMIT ?2",
-                    (pattern.as_str(), limit),
-                )
-                .await?;
+            let sql = format!(
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash, archived FROM chats
+                 WHERE (name LIKE ?1 OR username LIKE ?1){}
+                 ORDER BY last_message_ts DESC LIMIT ?2",
+                archived_clause
+            );
+            let mut rows = self.conn.query(&sql, (pattern.as_str(), limit)).await?;
             while let Some(row) = rows.next().await? {
                 chats.push(row_to_chat(&row)?);
             }
         } else {
-            let mut rows = self
-                .conn
-                .query(
-                    "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash FROM chats
-                     ORDER BY last_message_ts DESC LIMIT ?1",
-                    [limit],
-                )
-                .await?;
+            let sql = format!(
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash, archived FROM chats
+                 WHERE 1=1{}
+                 ORDER BY last_message_ts DESC LIMIT ?1",
+                archived_clause
+            );
+            let mut rows = self.conn.query(&sql, [limit]).await?;
             while let Some(row) = rows.next().await? {
                 chats.push(row_to_chat(&row)?);
             }
@@ -438,7 +462,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash FROM chats WHERE id = ?1",
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash, archived FROM chats WHERE id = ?1",
                 [id],
             )
             .await?;
@@ -481,7 +505,7 @@ impl Store {
         let mut rows = self
             .conn
             .query(
-                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash 
+                "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash, archived 
                  FROM chats WHERE last_sync_message_id IS NOT NULL 
                  ORDER BY last_message_ts DESC",
                 (),
@@ -1198,6 +1222,7 @@ fn row_to_chat(row: &Row) -> Result<Chat> {
         is_forum: row.get::<i64>(5).unwrap_or(0) != 0,
         last_sync_message_id: row.get::<Option<i64>>(6).ok().flatten(),
         access_hash: row.get::<Option<i64>>(7).ok().flatten(),
+        archived: row.get::<i64>(8).unwrap_or(0) != 0,
     })
 }
 

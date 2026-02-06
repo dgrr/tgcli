@@ -44,6 +44,8 @@ pub struct SyncOptions {
     pub chat_filter: Option<i64>,
     /// After sync, prune messages keeping only the N most recent per chat
     pub prune_after: Option<usize>,
+    /// Skip archived chats entirely (don't fetch dialogs or messages from archived folder)
+    pub skip_archived: bool,
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -166,6 +168,7 @@ struct ChatSyncTaskResult {
     chat_username: Option<String>,
     is_forum: bool,
     access_hash: Option<i64>,
+    archived: bool,
     messages: Vec<FetchedMessage>,
     highest_msg_id: Option<i64>,
     latest_ts: Option<DateTime<Utc>>,
@@ -483,6 +486,7 @@ impl App {
                     None,
                     is_forum,
                     access_hash,
+                    false, // Not archived (regular dialogs)
                 )
                 .await?;
             chats_stored += 1;
@@ -525,58 +529,61 @@ impl App {
             });
         }
 
-        // Phase 2: Fetch archived dialogs
-        if opts.show_progress {
-            eprint!("\rSyncing archived chats... {}", chats_stored);
-        }
-
-        let archived_peers = self.fetch_archived_dialogs().await?;
-        for peer in archived_peers {
-            // Check for shutdown
-            if shutdown_ctrl.is_triggered() {
-                break;
-            }
-            let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
-            let id = peer.id().bare_id();
-
-            if should_ignore(id, &kind) {
-                continue;
+        // Phase 2: Fetch archived dialogs (unless --skip-archived is set)
+        if !opts.skip_archived {
+            if opts.show_progress {
+                eprint!("\rSyncing archived chats... {}", chats_stored);
             }
 
-            self.store
-                .upsert_chat(
-                    id,
-                    &kind,
-                    &name,
-                    username.as_deref(),
-                    None,
-                    is_forum,
-                    access_hash,
-                )
-                .await?;
-            chats_stored += 1;
+            let archived_peers = self.fetch_archived_dialogs().await?;
+            for peer in archived_peers {
+                // Check for shutdown
+                if shutdown_ctrl.is_triggered() {
+                    break;
+                }
+                let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
+                let id = peer.id().bare_id();
 
-            // Also store as contact if it's a user
-            if let Peer::User(ref user) = peer {
+                if should_ignore(id, &kind) {
+                    continue;
+                }
+
                 self.store
-                    .upsert_contact(
-                        user.bare_id(),
-                        user.username(),
-                        user.first_name().unwrap_or(""),
-                        user.last_name().unwrap_or(""),
-                        user.phone().unwrap_or(""),
+                    .upsert_chat(
+                        id,
+                        &kind,
+                        &name,
+                        username.as_deref(),
+                        None,
+                        is_forum,
+                        access_hash,
+                        true, // Archived
                     )
                     .await?;
-            }
+                chats_stored += 1;
 
-            // If it's a forum, sync topics
-            if is_forum {
-                if let Ok(topic_count) = self.sync_topics(id).await {
-                    log::info!(
-                        "Synced {} topics for archived forum chat {}",
-                        topic_count,
-                        id
-                    );
+                // Also store as contact if it's a user
+                if let Peer::User(ref user) = peer {
+                    self.store
+                        .upsert_contact(
+                            user.bare_id(),
+                            user.username(),
+                            user.first_name().unwrap_or(""),
+                            user.last_name().unwrap_or(""),
+                            user.phone().unwrap_or(""),
+                        )
+                        .await?;
+                }
+
+                // If it's a forum, sync topics
+                if is_forum {
+                    if let Ok(topic_count) = self.sync_topics(id).await {
+                        log::info!(
+                            "Synced {} topics for archived forum chat {}",
+                            topic_count,
+                            id
+                        );
+                    }
                 }
             }
         }
@@ -642,6 +649,33 @@ impl App {
                 chats_stored: 0,
                 per_chat: Vec::new(),
             });
+        }
+
+        // Fetch unread counts from dialogs for the chats we're about to sync
+        let chat_ids_to_sync: HashSet<i64> = chats_to_sync.iter().map(|c| c.id).collect();
+        let mut unread_counts: std::collections::HashMap<i64, i32> =
+            std::collections::HashMap::new();
+
+        if opts.show_progress {
+            eprint!("\rFetching unread counts...");
+        }
+
+        let client = &self.tg.client;
+        let mut dialogs = client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await.ok().flatten() {
+            let chat_id = dialog.peer().id().bare_id();
+            if chat_ids_to_sync.contains(&chat_id) {
+                let unread = extract_unread_count(&dialog.raw);
+                unread_counts.insert(chat_id, unread);
+                // If we've found all the chats we need, stop early
+                if unread_counts.len() == chat_ids_to_sync.len() {
+                    break;
+                }
+            }
+        }
+
+        if opts.show_progress {
+            eprint!("\r\x1b[K"); // Clear line
         }
 
         // Progress tracking with atomics for thread-safety
@@ -727,6 +761,7 @@ impl App {
                             chat_username: chat.username.clone(),
                             is_forum: chat.is_forum,
                             access_hash: chat.access_hash,
+                            archived: chat.archived,
                             messages: Vec::new(),
                             highest_msg_id: None,
                             latest_ts: None,
@@ -754,6 +789,7 @@ impl App {
                                 chat_username: chat.username.clone(),
                                 is_forum: chat.is_forum,
                                 access_hash: chat.access_hash,
+                                archived: chat.archived,
                                 messages: Vec::new(),
                                 highest_msg_id: None,
                                 latest_ts: None,
@@ -909,6 +945,7 @@ impl App {
                         chat_username: chat.username.clone(),
                         is_forum: chat.is_forum,
                         access_hash: chat.access_hash,
+                        archived: chat.archived,
                         messages,
                         highest_msg_id,
                         latest_ts,
@@ -985,6 +1022,7 @@ impl App {
                         Some(ts),
                         result.is_forum,
                         result.access_hash,
+                        result.archived,
                     )
                     .await?;
             }
@@ -1026,10 +1064,12 @@ impl App {
                         Vec::new()
                     };
 
+                let chat_unread = unread_counts.get(&result.chat_id).copied().unwrap_or(0);
                 per_chat_map
                     .entry(result.chat_id)
                     .and_modify(|existing| {
                         existing.messages_synced += result.messages.len() as u64;
+                        existing.unread_count = chat_unread;
                         for new_topic in &new_topics {
                             if let Some(existing_topic) = existing
                                 .topics
@@ -1048,7 +1088,7 @@ impl App {
                         chat_name: result.chat_name.clone(),
                         messages_synced: result.messages.len() as u64,
                         topics: new_topics,
-                        unread_count: 0, // Not available in msgs-only sync
+                        unread_count: unread_counts.get(&result.chat_id).copied().unwrap_or(0),
                     });
             }
         }
@@ -1171,6 +1211,7 @@ impl App {
                     None,
                     is_forum,
                     access_hash,
+                    false, // Not archived (regular dialogs)
                 )
                 .await?;
             chats_stored += 1;
@@ -1362,6 +1403,7 @@ impl App {
                         Some(ts),
                         is_forum,
                         access_hash,
+                        false, // Not archived (regular dialogs)
                     )
                     .await?;
             }
@@ -1446,251 +1488,256 @@ impl App {
             });
         }
 
-        // Phase 1b: Also sync archived dialogs (folder_id=1)
-        if opts.show_progress {
-            eprint!(
-                "\rSyncing archived... {} chats, {} messages",
-                chats_stored, messages_stored
-            );
-        }
-
-        let archived_peers = self.fetch_archived_dialogs().await?;
-        for peer in archived_peers {
-            // Check for shutdown
-            if shutdown_ctrl.is_triggered() {
-                break;
+        // Phase 1b: Also sync archived dialogs (folder_id=1) (unless --skip-archived is set)
+        if !opts.skip_archived {
+            if opts.show_progress {
+                eprint!(
+                    "\rSyncing archived... {} chats, {} messages",
+                    chats_stored, messages_stored
+                );
             }
 
-            let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
-            let id = peer.id().bare_id();
-
-            // Skip ignored chats.
-            if should_ignore(id, &kind) {
-                continue;
-            }
-
-            self.store
-                .upsert_chat(
-                    id,
-                    &kind,
-                    &name,
-                    username.as_deref(),
-                    None,
-                    is_forum,
-                    access_hash,
-                )
-                .await?;
-            chats_stored += 1;
-
-            // Also store as contact if it's a user
-            if let Peer::User(ref user) = peer {
-                self.store
-                    .upsert_contact(
-                        user.bare_id(),
-                        user.username(),
-                        user.first_name().unwrap_or(""),
-                        user.last_name().unwrap_or(""),
-                        user.phone().unwrap_or(""),
-                    )
-                    .await?;
-            }
-
-            // Fetch messages for this chat
-            let peer_ref = PeerRef::from(&peer);
-            let mut message_iter = client.iter_messages(peer_ref);
-            let mut count = 0;
-            let mut latest_ts: Option<DateTime<Utc>> = None;
-            let mut highest_msg_id: Option<i64> = None;
-            // Track per-topic message counts for forums
-            let mut topic_counts: std::collections::HashMap<i32, u64> =
-                std::collections::HashMap::new();
-
-            // For incremental sync, get the last synced message ID
-            let last_sync_id = if opts.incremental {
-                self.store.get_last_sync_message_id(id).await.ok().flatten()
-            } else {
-                None
-            };
-
-            // Determine max messages to fetch
-            let max_messages = if opts.incremental && last_sync_id.is_some() {
-                INCREMENTAL_MAX_MESSAGES
-            } else {
-                opts.messages_per_chat
-            };
-
-            while let Some(msg) = message_iter.next().await.with_context(|| {
-                format!(
-                    "Failed to fetch messages for archived chat {} ({})",
-                    name, id
-                )
-            })? {
-                // Check for shutdown during message fetching
+            let archived_peers = self.fetch_archived_dialogs().await?;
+            for peer in archived_peers {
+                // Check for shutdown
                 if shutdown_ctrl.is_triggered() {
                     break;
                 }
 
-                let msg_id = msg.id() as i64;
+                let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
+                let id = peer.id().bare_id();
 
-                // For incremental sync, stop when we hit a message we've already seen
-                if let Some(last_id) = last_sync_id {
-                    if msg_id <= last_id {
-                        log::debug!(
-                            "Archived chat {}: reached last synced message {} (stopping at {})",
-                            id,
-                            last_id,
-                            msg_id
-                        );
-                        break;
-                    }
+                // Skip ignored chats.
+                if should_ignore(id, &kind) {
+                    continue;
                 }
 
-                if count >= max_messages {
-                    break;
-                }
-                count += 1;
-
-                // Track the highest message ID we've seen
-                if highest_msg_id.is_none() || msg_id > highest_msg_id.unwrap() {
-                    highest_msg_id = Some(msg_id);
-                }
-
-                let msg_ts = msg.date();
-                if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
-                    latest_ts = Some(msg_ts);
-                }
-
-                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
-                let from_me = msg.outgoing();
-
-                let text = msg.text().to_string();
-                let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
-                let topic_id = if is_forum {
-                    extract_topic_id(&msg)
-                } else {
-                    None
-                };
-
-                // Track per-topic counts for forums
-                if let Some(tid) = topic_id {
-                    *topic_counts.entry(tid).or_insert(0) += 1;
-                }
-
-                // Download media if enabled
-                let (media_type, media_path) = if opts.download_media {
-                    self.download_message_media(&msg, id).await?
-                } else {
-                    (msg.media().map(|_| "media".to_string()), None)
-                };
-
-                self.store
-                    .upsert_message(UpsertMessageParams {
-                        id: msg.id() as i64,
-                        chat_id: id,
-                        sender_id,
-                        ts: msg_ts,
-                        edit_ts: msg.edit_date(),
-                        from_me,
-                        text: text.clone(),
-                        media_type,
-                        media_path,
-                        reply_to_id,
-                        topic_id,
-                    })
-                    .await?;
-                messages_stored += 1;
-
-                // Show progress periodically
-                if opts.show_progress && last_progress_time.elapsed() >= progress_interval {
-                    eprint!(
-                        "\rSyncing archived... {} chats, {} messages",
-                        chats_stored, messages_stored
-                    );
-                    last_progress_time = std::time::Instant::now();
-                }
-            }
-
-            // Update chat's last_message_ts
-            if let Some(ts) = latest_ts {
                 self.store
                     .upsert_chat(
                         id,
                         &kind,
                         &name,
                         username.as_deref(),
-                        Some(ts),
+                        None,
                         is_forum,
                         access_hash,
+                        true, // Archived
                     )
                     .await?;
-            }
+                chats_stored += 1;
 
-            // Update last_sync_message_id for incremental sync
-            if let Some(high_id) = highest_msg_id {
-                self.store.update_last_sync_message_id(id, high_id).await?;
-            }
-
-            // If it's a forum, sync topics first so we can get names
-            if is_forum {
-                if let Ok(topic_count) = self.sync_topics(id).await {
-                    log::info!(
-                        "Synced {} topics for archived forum chat {}",
-                        topic_count,
-                        id
-                    );
+                // Also store as contact if it's a user
+                if let Peer::User(ref user) = peer {
+                    self.store
+                        .upsert_contact(
+                            user.bare_id(),
+                            user.username(),
+                            user.first_name().unwrap_or(""),
+                            user.last_name().unwrap_or(""),
+                            user.phone().unwrap_or(""),
+                        )
+                        .await?;
                 }
-            }
 
-            // Track per-chat summary if messages were synced
-            if count > 0 {
-                // Build topic summaries for forums
-                let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty() {
-                    let mut topic_summaries = Vec::new();
-                    for (tid, msg_count) in &topic_counts {
-                        let topic = self.store.get_topic(id, *tid).await.ok().flatten();
-                        let topic_name = topic
-                            .as_ref()
-                            .map(|t| t.name.clone())
-                            .unwrap_or_else(|| format!("Topic {}", tid));
-                        let unread_count = topic.map(|t| t.unread_count).unwrap_or(0);
-                        topic_summaries.push(TopicSyncSummary {
-                            topic_id: *tid,
-                            topic_name,
-                            messages_synced: *msg_count,
-                            unread_count,
-                        });
-                    }
-                    topic_summaries
+                // Fetch messages for this chat
+                let peer_ref = PeerRef::from(&peer);
+                let mut message_iter = client.iter_messages(peer_ref);
+                let mut count = 0;
+                let mut latest_ts: Option<DateTime<Utc>> = None;
+                let mut highest_msg_id: Option<i64> = None;
+                // Track per-topic message counts for forums
+                let mut topic_counts: std::collections::HashMap<i32, u64> =
+                    std::collections::HashMap::new();
+
+                // For incremental sync, get the last synced message ID
+                let last_sync_id = if opts.incremental {
+                    self.store.get_last_sync_message_id(id).await.ok().flatten()
                 } else {
-                    Vec::new()
+                    None
                 };
 
-                // Aggregate into per_chat_map (archived chats don't have unread info)
-                per_chat_map
-                    .entry(id)
-                    .and_modify(|existing| {
-                        existing.messages_synced += count as u64;
-                        // Merge topics by topic_id
-                        for new_topic in &new_topics {
-                            if let Some(existing_topic) = existing
-                                .topics
-                                .iter_mut()
-                                .find(|t| t.topic_id == new_topic.topic_id)
-                            {
-                                existing_topic.messages_synced += new_topic.messages_synced;
-                                existing_topic.unread_count = new_topic.unread_count;
-                            } else {
-                                existing.topics.push(new_topic.clone());
-                            }
+                // Determine max messages to fetch
+                let max_messages = if opts.incremental && last_sync_id.is_some() {
+                    INCREMENTAL_MAX_MESSAGES
+                } else {
+                    opts.messages_per_chat
+                };
+
+                while let Some(msg) = message_iter.next().await.with_context(|| {
+                    format!(
+                        "Failed to fetch messages for archived chat {} ({})",
+                        name, id
+                    )
+                })? {
+                    // Check for shutdown during message fetching
+                    if shutdown_ctrl.is_triggered() {
+                        break;
+                    }
+
+                    let msg_id = msg.id() as i64;
+
+                    // For incremental sync, stop when we hit a message we've already seen
+                    if let Some(last_id) = last_sync_id {
+                        if msg_id <= last_id {
+                            log::debug!(
+                                "Archived chat {}: reached last synced message {} (stopping at {})",
+                                id,
+                                last_id,
+                                msg_id
+                            );
+                            break;
                         }
-                    })
-                    .or_insert(ChatSyncSummary {
-                        chat_id: id,
-                        chat_name: name.clone(),
-                        messages_synced: count as u64,
-                        topics: new_topics,
-                        unread_count: 0, // Archived chats don't have unread info
-                    });
+                    }
+
+                    if count >= max_messages {
+                        break;
+                    }
+                    count += 1;
+
+                    // Track the highest message ID we've seen
+                    if highest_msg_id.is_none() || msg_id > highest_msg_id.unwrap() {
+                        highest_msg_id = Some(msg_id);
+                    }
+
+                    let msg_ts = msg.date();
+                    if latest_ts.is_none() || msg_ts > latest_ts.unwrap() {
+                        latest_ts = Some(msg_ts);
+                    }
+
+                    let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                    let from_me = msg.outgoing();
+
+                    let text = msg.text().to_string();
+                    let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
+                    let topic_id = if is_forum {
+                        extract_topic_id(&msg)
+                    } else {
+                        None
+                    };
+
+                    // Track per-topic counts for forums
+                    if let Some(tid) = topic_id {
+                        *topic_counts.entry(tid).or_insert(0) += 1;
+                    }
+
+                    // Download media if enabled
+                    let (media_type, media_path) = if opts.download_media {
+                        self.download_message_media(&msg, id).await?
+                    } else {
+                        (msg.media().map(|_| "media".to_string()), None)
+                    };
+
+                    self.store
+                        .upsert_message(UpsertMessageParams {
+                            id: msg.id() as i64,
+                            chat_id: id,
+                            sender_id,
+                            ts: msg_ts,
+                            edit_ts: msg.edit_date(),
+                            from_me,
+                            text: text.clone(),
+                            media_type,
+                            media_path,
+                            reply_to_id,
+                            topic_id,
+                        })
+                        .await?;
+                    messages_stored += 1;
+
+                    // Show progress periodically
+                    if opts.show_progress && last_progress_time.elapsed() >= progress_interval {
+                        eprint!(
+                            "\rSyncing archived... {} chats, {} messages",
+                            chats_stored, messages_stored
+                        );
+                        last_progress_time = std::time::Instant::now();
+                    }
+                }
+
+                // Update chat's last_message_ts
+                if let Some(ts) = latest_ts {
+                    self.store
+                        .upsert_chat(
+                            id,
+                            &kind,
+                            &name,
+                            username.as_deref(),
+                            Some(ts),
+                            is_forum,
+                            access_hash,
+                            true, // Archived
+                        )
+                        .await?;
+                }
+
+                // Update last_sync_message_id for incremental sync
+                if let Some(high_id) = highest_msg_id {
+                    self.store.update_last_sync_message_id(id, high_id).await?;
+                }
+
+                // If it's a forum, sync topics first so we can get names
+                if is_forum {
+                    if let Ok(topic_count) = self.sync_topics(id).await {
+                        log::info!(
+                            "Synced {} topics for archived forum chat {}",
+                            topic_count,
+                            id
+                        );
+                    }
+                }
+
+                // Track per-chat summary if messages were synced
+                if count > 0 {
+                    // Build topic summaries for forums
+                    let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty()
+                    {
+                        let mut topic_summaries = Vec::new();
+                        for (tid, msg_count) in &topic_counts {
+                            let topic = self.store.get_topic(id, *tid).await.ok().flatten();
+                            let topic_name = topic
+                                .as_ref()
+                                .map(|t| t.name.clone())
+                                .unwrap_or_else(|| format!("Topic {}", tid));
+                            let unread_count = topic.map(|t| t.unread_count).unwrap_or(0);
+                            topic_summaries.push(TopicSyncSummary {
+                                topic_id: *tid,
+                                topic_name,
+                                messages_synced: *msg_count,
+                                unread_count,
+                            });
+                        }
+                        topic_summaries
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Aggregate into per_chat_map (archived chats don't have unread info)
+                    per_chat_map
+                        .entry(id)
+                        .and_modify(|existing| {
+                            existing.messages_synced += count as u64;
+                            // Merge topics by topic_id
+                            for new_topic in &new_topics {
+                                if let Some(existing_topic) = existing
+                                    .topics
+                                    .iter_mut()
+                                    .find(|t| t.topic_id == new_topic.topic_id)
+                                {
+                                    existing_topic.messages_synced += new_topic.messages_synced;
+                                    existing_topic.unread_count = new_topic.unread_count;
+                                } else {
+                                    existing.topics.push(new_topic.clone());
+                                }
+                            }
+                        })
+                        .or_insert(ChatSyncSummary {
+                            chat_id: id,
+                            chat_name: name.clone(),
+                            messages_synced: count as u64,
+                            topics: new_topics,
+                            unread_count: 0, // Archived chats don't have unread info
+                        });
+                }
             }
         }
 

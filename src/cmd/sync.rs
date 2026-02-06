@@ -50,6 +50,10 @@ pub struct CommonSyncArgs {
     /// After sync, prune messages keeping only the N most recent per chat
     #[arg(long, value_name = "N")]
     pub prune_after: Option<usize>,
+
+    /// Skip archived chats entirely (don't fetch dialogs or messages from archived folder)
+    #[arg(long, default_value_t = false)]
+    pub skip_archived: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -107,6 +111,7 @@ fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions 
         concurrency: common.concurrency,
         chat_filter: None,
         prune_after: common.prune_after,
+        skip_archived: common.skip_archived,
     }
 }
 

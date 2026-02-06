@@ -19,12 +19,15 @@ pub enum ChatsCommand {
         /// Limit results
         #[arg(long, default_value = "50")]
         limit: i64,
-        /// Filter by folder ID
+        /// Filter by folder ID (fetches from Telegram API)
         #[arg(long)]
         folder: Option<i32>,
-        /// Show only archived chats (shortcut for --folder 1)
+        /// Show only archived chats (from local DB, or API with --folder 1)
         #[arg(long)]
         archived: bool,
+        /// Show only non-archived chats (local DB filter)
+        #[arg(long, conflicts_with = "archived")]
+        active: bool,
     },
     /// Show a single chat
     Show {
@@ -247,21 +250,32 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             limit,
             folder,
             archived,
+            active,
         } => {
-            // If filtering by folder or archived, we need to fetch from Telegram API
-            let folder_id = if *archived { Some(1) } else { *folder };
-
-            if let Some(fid) = folder_id {
+            // If filtering by folder, fetch from Telegram API
+            if let Some(fid) = folder {
                 // Fetch chats from folder via Telegram API
-                list_folder_chats(cli, &store, fid, query.as_deref(), *limit).await?;
+                list_folder_chats(cli, &store, *fid, query.as_deref(), *limit).await?;
             } else {
-                // Use local store
-                let chats = store.list_chats(query.as_deref(), *limit).await?;
+                // Use local store with optional archived filter
+                let archived_filter = if *archived {
+                    Some(true)
+                } else if *active {
+                    Some(false)
+                } else {
+                    None // Show all chats
+                };
+                let chats = store
+                    .list_chats(query.as_deref(), *limit, archived_filter)
+                    .await?;
 
                 if cli.output.is_json() {
                     out::write_json(&chats)?;
                 } else {
-                    println!("{:<12} {:<30} {:<16} LAST MESSAGE", "KIND", "NAME", "ID");
+                    println!(
+                        "{:<12} {:<30} {:<16} {:<8} LAST MESSAGE",
+                        "KIND", "NAME", "ID", "ARCH"
+                    );
                     for c in &chats {
                         let name = out::truncate(&c.name, 28);
                         let ts = c
@@ -273,7 +287,11 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                         } else {
                             c.kind.clone()
                         };
-                        println!("{:<12} {:<30} {:<16} {}", kind_display, name, c.id, ts);
+                        let archived_display = if c.archived { "yes" } else { "" };
+                        println!(
+                            "{:<12} {:<30} {:<16} {:<8} {}",
+                            kind_display, name, c.id, archived_display, ts
+                        );
                     }
                 }
             }
@@ -293,6 +311,9 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                         }
                         if c.is_forum {
                             println!("Forum: yes");
+                        }
+                        if c.archived {
+                            println!("Archived: yes");
                         }
                         if let Some(ts) = c.last_message_ts {
                             println!("Last message: {}", ts.to_rfc3339());

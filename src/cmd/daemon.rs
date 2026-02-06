@@ -216,6 +216,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                 concurrency: 4,
                 chat_filter: None,
                 prune_after: None,
+                skip_archived: false,
             };
 
             let result = backfill_app.sync(opts).await;
@@ -338,6 +339,16 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                 let is_forum = is_forum_peer(&peer);
                                 let access_hash = access_hash_from_peer(&peer);
 
+                                // Check existing chat's archived status, default to false for new chats
+                                let archived = app
+                                    .store
+                                    .get_chat(chat_id)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .map(|c| c.archived)
+                                    .unwrap_or(false);
+
                                 if let Err(e) = app.store.upsert_chat(
                                     chat_id,
                                     chat_kind,
@@ -346,6 +357,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                     Some(ts),
                                     is_forum,
                                     access_hash,
+                                    archived,
                                 ).await {
                                     log::error!("Failed to update chat metadata: {}", e);
                                 }
