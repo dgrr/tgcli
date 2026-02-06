@@ -217,6 +217,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                 chat_filter: None,
                 prune_after: None,
                 skip_archived: false,
+                archived_only: false,
             };
 
             let result = backfill_app.sync(opts).await;

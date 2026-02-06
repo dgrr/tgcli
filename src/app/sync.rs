@@ -46,6 +46,8 @@ pub struct SyncOptions {
     pub prune_after: Option<usize>,
     /// Skip archived chats entirely (don't fetch dialogs or messages from archived folder)
     pub skip_archived: bool,
+    /// Sync ONLY archived chats (opposite of --skip-archived)
+    pub archived_only: bool,
 }
 
 /// Get media type string and file extension from grammers Media enum
@@ -618,6 +620,8 @@ impl App {
 
         // Filter chats to process
         let chat_filter = opts.chat_filter;
+        let skip_archived = opts.skip_archived;
+        let archived_only = opts.archived_only;
         let chats_to_sync: Vec<_> = all_chats
             .into_iter()
             .filter(|chat| {
@@ -631,6 +635,13 @@ impl App {
                     return false;
                 }
                 if ignore_channels && chat.kind == "channel" {
+                    return false;
+                }
+                // Filter by archived status
+                if skip_archived && chat.archived {
+                    return false;
+                }
+                if archived_only && !chat.archived {
                     return false;
                 }
                 // Must have peer info to sync

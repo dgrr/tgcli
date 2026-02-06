@@ -54,6 +54,10 @@ pub struct CommonSyncArgs {
     /// Skip archived chats entirely (don't fetch dialogs or messages from archived folder)
     #[arg(long, default_value_t = false)]
     pub skip_archived: bool,
+
+    /// Sync ONLY archived chats (opposite of --skip-archived)
+    #[arg(long, default_value_t = false, conflicts_with = "skip_archived")]
+    pub archived_only: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -112,6 +116,7 @@ fn build_sync_options(common: &CommonSyncArgs) -> crate::app::sync::SyncOptions 
         chat_filter: None,
         prune_after: common.prune_after,
         skip_archived: common.skip_archived,
+        archived_only: common.archived_only,
     }
 }
 
