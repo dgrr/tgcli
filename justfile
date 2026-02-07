@@ -2,10 +2,10 @@ default:
     @just --list
 
 build:
-    cargo build --release
+    cargo build -q --release
 
 debug:
-    cargo build
+    cargo build -q
 
 install: build
     cp target/release/tgcli /opt/homebrew/bin/tgcli
