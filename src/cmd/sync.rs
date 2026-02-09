@@ -95,6 +95,7 @@ fn build_output_mode(common: &CommonSyncArgs) -> crate::app::sync::OutputMode {
         match common.output {
             crate::out::OutputMode::Json => crate::app::sync::OutputMode::Json,
             crate::out::OutputMode::Text => crate::app::sync::OutputMode::Text,
+            crate::out::OutputMode::Markdown => crate::app::sync::OutputMode::Text, // Markdown falls back to text for sync
             crate::out::OutputMode::None => crate::app::sync::OutputMode::None,
         }
     }

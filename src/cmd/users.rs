@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::out;
+use crate::out::markdown::{ToMarkdown, UserInfoMd};
 use crate::Cli;
 use anyhow::{Context, Result};
 use clap::Subcommand;
@@ -103,6 +104,23 @@ async fn show_user(cli: &Cli, user_id: i64) -> Result<()> {
 
     if cli.output.is_json() {
         out::write_json(&info)?;
+    } else if cli.output.is_markdown() {
+        let info_md = UserInfoMd {
+            id: info.id,
+            first_name: info.first_name.clone(),
+            last_name: info.last_name.clone(),
+            username: info.username.clone(),
+            phone: info.phone.clone(),
+            bio: info.bio.clone(),
+            is_bot: info.is_bot,
+            is_verified: info.is_verified,
+            is_premium: info.is_premium,
+            is_scam: info.is_scam,
+            is_fake: info.is_fake,
+            is_blocked: info.is_blocked,
+            common_chats_count: info.common_chats_count,
+        };
+        out::write_markdown(&info_md.to_markdown());
     } else {
         println!("ID: {}", info.id);
 

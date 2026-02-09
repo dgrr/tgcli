@@ -8,7 +8,7 @@ debug:
     cargo build -q
 
 install: build
-    cp target/release/tgcli /opt/homebrew/bin/tgcli
+    cargo install -q --path .
 
 clean:
     cargo clean

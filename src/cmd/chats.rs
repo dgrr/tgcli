@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::out;
+use crate::out::markdown::{format_chats, format_chat_search_results, format_members, MemberMd, SearchChatResultMd};
 use crate::store::Store;
 use crate::Cli;
 use anyhow::Result;
@@ -16,9 +17,9 @@ pub enum ChatsCommand {
         /// Search query
         #[arg(long)]
         query: Option<String>,
-        /// Limit results
-        #[arg(long, default_value = "50")]
-        limit: i64,
+        /// Limit results (optional, unlimited if not specified)
+        #[arg(long)]
+        limit: Option<i64>,
         /// Filter by folder ID (fetches from Telegram API)
         #[arg(long)]
         folder: Option<i32>,
@@ -252,10 +253,13 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             archived,
             active,
         } => {
+            // Use unlimited (i64::MAX) if no limit specified
+            let effective_limit = limit.unwrap_or(i64::MAX);
+            
             // If filtering by folder, fetch from Telegram API
             if let Some(fid) = folder {
                 // Fetch chats from folder via Telegram API
-                list_folder_chats(cli, &store, *fid, query.as_deref(), *limit).await?;
+                list_folder_chats(cli, &store, *fid, query.as_deref(), effective_limit).await?;
             } else {
                 // Use local store with optional archived filter
                 let archived_filter = if *archived {
@@ -266,11 +270,20 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     None // Show all chats
                 };
                 let chats = store
-                    .list_chats(query.as_deref(), *limit, archived_filter)
+                    .list_chats(query.as_deref(), effective_limit, archived_filter)
                     .await?;
 
                 if cli.output.is_json() {
                     out::write_json(&chats)?;
+                } else if cli.output.is_markdown() {
+                    let title = if *archived {
+                        "Archived Chats"
+                    } else if *active {
+                        "Active Chats"
+                    } else {
+                        "Chats"
+                    };
+                    out::write_markdown(&format_chats(&chats, title));
                 } else {
                     println!(
                         "{:<12} {:<30} {:<16} {:<8} LAST MESSAGE",
@@ -302,6 +315,9 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                 Some(c) => {
                     if cli.output.is_json() {
                         out::write_json(&c)?;
+                    } else if cli.output.is_markdown() {
+                        use crate::out::markdown::ToMarkdown;
+                        out::write_markdown(&c.to_markdown());
                     } else {
                         println!("ID: {}", c.id);
                         println!("Kind: {}", c.kind);
@@ -454,6 +470,16 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     "count": members.len(),
                     "members": members,
                 }))?;
+            } else if cli.output.is_markdown() {
+                let members_md: Vec<MemberMd> = members.iter().map(|m| MemberMd {
+                    id: m.id,
+                    username: m.username.clone(),
+                    first_name: m.first_name.clone(),
+                    last_name: m.last_name.clone(),
+                    status: m.status.clone(),
+                    role: m.role.clone(),
+                }).collect();
+                out::write_markdown(&format_members(&members_md, &chat_name, *id));
             } else {
                 println!(
                     "Members of \"{}\" ({}) - {} total:\n",
@@ -602,6 +628,14 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     "count": results.len(),
                     "chats": results,
                 }))?;
+            } else if cli.output.is_markdown() {
+                let results_md: Vec<SearchChatResultMd> = results.iter().map(|c| SearchChatResultMd {
+                    id: c.id,
+                    kind: c.kind.clone(),
+                    name: c.name.clone(),
+                    username: c.username.clone(),
+                }).collect();
+                out::write_markdown(&format_chat_search_results(&results_md, query));
             } else {
                 println!("Search results for \"{}\":\n", query);
                 println!("{:<12} {:<30} {:<16} USERNAME", "KIND", "NAME", "ID");

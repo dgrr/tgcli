@@ -1,4 +1,5 @@
 use crate::out;
+use crate::out::markdown::{format_contacts, ToMarkdown};
 use crate::store::Store;
 use crate::Cli;
 use anyhow::Result;
@@ -38,6 +39,8 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
 
             if cli.output.is_json() {
                 out::write_json(&contacts)?;
+            } else if cli.output.is_markdown() {
+                out::write_markdown(&format_contacts(&contacts, "Contacts"));
             } else {
                 println!(
                     "{:<16} {:<20} {:<20} {:<16} USERNAME",
@@ -60,6 +63,8 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
 
             if cli.output.is_json() {
                 out::write_json(&contacts)?;
+            } else if cli.output.is_markdown() {
+                out::write_markdown(&format_contacts(&contacts, &format!("Contacts matching \"{}\"", query)));
             } else {
                 println!(
                     "{:<16} {:<20} {:<20} {:<16} USERNAME",
@@ -83,6 +88,8 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
                 Some(c) => {
                     if cli.output.is_json() {
                         out::write_json(&c)?;
+                    } else if cli.output.is_markdown() {
+                        out::write_markdown(&c.to_markdown());
                     } else {
                         println!("ID: {}", c.user_id);
                         println!("Name: {} {}", c.first_name, c.last_name);

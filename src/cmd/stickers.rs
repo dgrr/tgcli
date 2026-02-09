@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::out;
+use crate::out::markdown::{format_sticker_packs, format_stickers, StickerPackMd, StickerMd};
 use crate::Cli;
 use anyhow::Result;
 use clap::Subcommand;
@@ -112,6 +113,16 @@ async fn list_sticker_packs(app: &App, cli: &Cli) -> Result<()> {
             "count": packs.len(),
             "packs": packs,
         }))?;
+    } else if cli.output.is_markdown() {
+        let packs_md: Vec<StickerPackMd> = packs.iter().map(|p| StickerPackMd {
+            id: p.id,
+            short_name: p.short_name.clone(),
+            title: p.title.clone(),
+            count: p.count,
+            official: p.official,
+            emojis: p.emojis,
+        }).collect();
+        out::write_markdown(&format_sticker_packs(&packs_md));
     } else {
         println!(
             "{:<20} {:<40} {:<8} {:<8} {:<6}",
@@ -201,6 +212,14 @@ async fn show_sticker_pack(app: &App, cli: &Cli, pack: &str) -> Result<()> {
             "count": stickers.len(),
             "stickers": stickers,
         }))?;
+    } else if cli.output.is_markdown() {
+        let stickers_md: Vec<StickerMd> = stickers.iter().map(|s| StickerMd {
+            emoji: s.emoji.clone(),
+            doc_id: s.doc_id,
+            file_id: s.file_id.clone(),
+            animated: s.animated,
+        }).collect();
+        out::write_markdown(&format_stickers(&stickers_md, pack, &set_title));
     } else {
         println!("Pack: {} ({})\n", set_title, pack);
         println!("{:<6} {:<20} FILE_ID", "EMOJI", "DOC_ID");
@@ -274,6 +293,14 @@ async fn search_stickers(app: &App, cli: &Cli, emoji: &str, limit: usize) -> Res
             "count": stickers.len(),
             "stickers": stickers,
         }))?;
+    } else if cli.output.is_markdown() {
+        let stickers_md: Vec<StickerMd> = stickers.iter().map(|s| StickerMd {
+            emoji: s.emoji.clone(),
+            doc_id: s.doc_id,
+            file_id: s.file_id.clone(),
+            animated: s.animated,
+        }).collect();
+        out::write_markdown(&format_stickers(&stickers_md, emoji, &format!("Stickers for {}", emoji)));
     } else {
         println!("Stickers for emoji: {}\n", emoji);
         println!("{:<6} {:<20} FILE_ID", "EMOJI", "DOC_ID");

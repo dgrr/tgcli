@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::out;
+use crate::out::markdown::{format_messages, format_message_search, ToMarkdown};
 use crate::store::{self, Store};
 use crate::Cli;
 use anyhow::Result;
@@ -332,6 +333,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 out::write_json(&serde_json::json!({
                     "messages": msgs,
                 }))?;
+            } else if cli.output.is_markdown() {
+                out::write_markdown(&format_messages(&msgs, "Messages"));
             } else {
                 println!(
                     "{:<20} {:<24} {:<18} {:<10} {:<8} TEXT",
@@ -383,6 +386,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                         "messages": results,
                         "global": true,
                     }))?;
+                } else if cli.output.is_markdown() {
+                    out::write_markdown(&format_message_search(&results, query, true));
                 } else {
                     println!(
                         "{:<20} {:<24} {:<18} {:<10} TEXT",
@@ -427,6 +432,23 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                         "fts": store.has_fts(),
                         "global": false,
                     }))?;
+                } else if cli.output.is_markdown() {
+                    // Convert SearchResult to Message for markdown formatting
+                    let messages: Vec<_> = msgs.iter().map(|m| crate::store::Message {
+                        id: m.id,
+                        chat_id: m.chat_id,
+                        sender_id: m.sender_id,
+                        from_me: m.from_me,
+                        ts: m.ts,
+                        edit_ts: None,
+                        text: if !m.snippet.is_empty() { m.snippet.clone() } else { m.text.clone() },
+                        media_type: m.media_type.clone(),
+                        media_path: None,
+                        topic_id: m.topic_id,
+                        reply_to_id: m.reply_to_id,
+                        snippet: m.snippet.clone(),
+                    }).collect();
+                    out::write_markdown(&format_message_search(&messages, query, false));
                 } else {
                     println!(
                         "{:<20} {:<24} {:<18} {:<10} MATCH",
@@ -469,6 +491,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
 
             if cli.output.is_json() {
                 out::write_json(&msgs)?;
+            } else if cli.output.is_markdown() {
+                out::write_markdown(&format_messages(&msgs, &format!("Context for Message {}", id)));
             } else {
                 println!(
                     "{:<20} {:<24} {:<18} {:<10} TEXT",
@@ -500,6 +524,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 Some(m) => {
                     if cli.output.is_json() {
                         out::write_json(&m)?;
+                    } else if cli.output.is_markdown() {
+                        out::write_markdown(&m.to_markdown());
                     } else {
                         println!("Chat: {}", m.chat_id);
                         println!("ID: {}", m.id);
