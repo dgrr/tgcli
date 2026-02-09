@@ -1,6 +1,5 @@
 use crate::app::App;
 use crate::out;
-use crate::out::markdown::{format_messages, format_message_search, ToMarkdown};
 use crate::store::{self, Store};
 use crate::Cli;
 use anyhow::Result;
@@ -334,34 +333,9 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                     "messages": msgs,
                 }))?;
             } else if cli.output.is_markdown() {
-                out::write_markdown(&format_messages(&msgs, "Messages"));
+                cli.output.write_titled(&msgs, "Messages")?;
             } else {
-                println!(
-                    "{:<20} {:<24} {:<18} {:<10} {:<8} TEXT",
-                    "TIME", "CHAT", "FROM", "ID", "TOPIC"
-                );
-                for m in &msgs {
-                    let from = if m.from_me {
-                        "me".to_string()
-                    } else {
-                        m.sender_id.to_string()
-                    };
-                    let topic_str = m
-                        .topic_id
-                        .map(|t| t.to_string())
-                        .unwrap_or_else(|| "-".to_string());
-                    let text = out::truncate(&m.text, 70);
-                    let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
-                    println!(
-                        "{:<20} {:<24} {:<18} {:<10} {:<8} {}",
-                        ts,
-                        out::truncate(&m.chat_id.to_string(), 22),
-                        out::truncate(&from, 16),
-                        m.id,
-                        topic_str,
-                        text,
-                    );
-                }
+                cli.output.write(&msgs)?;
             }
         }
         MessagesCommand::Search {
@@ -387,28 +361,9 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                         "global": true,
                     }))?;
                 } else if cli.output.is_markdown() {
-                    out::write_markdown(&format_message_search(&results, query, true));
+                    cli.output.write_titled(&results, &format!("Global Search Results for \"{}\"", query))?;
                 } else {
-                    println!(
-                        "{:<20} {:<24} {:<18} {:<10} TEXT",
-                        "TIME", "CHAT", "FROM", "ID"
-                    );
-                    for m in &results {
-                        let from_str = if m.from_me {
-                            "me".to_string()
-                        } else {
-                            m.sender_id.to_string()
-                        };
-                        let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
-                        println!(
-                            "{:<20} {:<24} {:<18} {:<10} {}",
-                            ts,
-                            out::truncate(&m.chat_id.to_string(), 22),
-                            out::truncate(&from_str, 16),
-                            m.id,
-                            out::truncate(&m.text, 60),
-                        );
-                    }
+                    cli.output.write(&results)?;
                     eprintln!("\nSearched via Telegram API (global search)");
                 }
             } else {
@@ -433,48 +388,9 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                         "global": false,
                     }))?;
                 } else if cli.output.is_markdown() {
-                    // Convert SearchResult to Message for markdown formatting
-                    let messages: Vec<_> = msgs.iter().map(|m| crate::store::Message {
-                        id: m.id,
-                        chat_id: m.chat_id,
-                        sender_id: m.sender_id,
-                        from_me: m.from_me,
-                        ts: m.ts,
-                        edit_ts: None,
-                        text: if !m.snippet.is_empty() { m.snippet.clone() } else { m.text.clone() },
-                        media_type: m.media_type.clone(),
-                        media_path: None,
-                        topic_id: m.topic_id,
-                        reply_to_id: m.reply_to_id,
-                        snippet: m.snippet.clone(),
-                    }).collect();
-                    out::write_markdown(&format_message_search(&messages, query, false));
+                    cli.output.write_titled(&msgs, &format!("Search Results for \"{}\"", query))?;
                 } else {
-                    println!(
-                        "{:<20} {:<24} {:<18} {:<10} MATCH",
-                        "TIME", "CHAT", "FROM", "ID"
-                    );
-                    for m in &msgs {
-                        let from = if m.from_me {
-                            "me".to_string()
-                        } else {
-                            m.sender_id.to_string()
-                        };
-                        let text = if !m.snippet.is_empty() {
-                            &m.snippet
-                        } else {
-                            &m.text
-                        };
-                        let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
-                        println!(
-                            "{:<20} {:<24} {:<18} {:<10} {}",
-                            ts,
-                            out::truncate(&m.chat_id.to_string(), 22),
-                            out::truncate(&from, 16),
-                            m.id,
-                            out::truncate(text, 90),
-                        );
-                    }
+                    cli.output.write(&msgs)?;
                     if !store.has_fts() {
                         eprintln!("Note: FTS5 not enabled; search is using LIKE (slow).");
                     }
@@ -492,58 +408,16 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             if cli.output.is_json() {
                 out::write_json(&msgs)?;
             } else if cli.output.is_markdown() {
-                out::write_markdown(&format_messages(&msgs, &format!("Context for Message {}", id)));
+                cli.output.write_titled(&msgs, &format!("Context for Message {}", id))?;
             } else {
-                println!(
-                    "{:<20} {:<24} {:<18} {:<10} TEXT",
-                    "TIME", "CHAT", "FROM", "ID"
-                );
-                for m in &msgs {
-                    let from = if m.from_me {
-                        "me".to_string()
-                    } else {
-                        m.sender_id.to_string()
-                    };
-                    let prefix = if m.id == *id { ">> " } else { "" };
-                    let ts = m.ts.format("%Y-%m-%d %H:%M:%S").to_string();
-                    println!(
-                        "{:<20} {:<24} {:<18} {:<10} {}{}",
-                        ts,
-                        out::truncate(&m.chat_id.to_string(), 22),
-                        out::truncate(&from, 16),
-                        m.id,
-                        prefix,
-                        out::truncate(&m.text, 80),
-                    );
-                }
+                cli.output.write(&msgs)?;
             }
         }
         MessagesCommand::Show { chat, id } => {
             let msg = store.get_message(*chat, *id).await?;
             match msg {
                 Some(m) => {
-                    if cli.output.is_json() {
-                        out::write_json(&m)?;
-                    } else if cli.output.is_markdown() {
-                        out::write_markdown(&m.to_markdown());
-                    } else {
-                        println!("Chat: {}", m.chat_id);
-                        println!("ID: {}", m.id);
-                        println!("Time: {}", m.ts.to_rfc3339());
-                        if m.from_me {
-                            println!("From: me");
-                        } else {
-                            println!("From: {}", m.sender_id);
-                        }
-                        if let Some(topic_id) = m.topic_id {
-                            println!("Topic: {}", topic_id);
-                        }
-                        if let Some(ref mt) = m.media_type {
-                            println!("Media: {}", mt);
-                        }
-                        println!();
-                        println!("{}", m.text);
-                    }
+                    cli.output.write(&m)?;
                 }
                 None => {
                     anyhow::bail!("Message {} not found in chat {}. The message may have been deleted or the chat needs to be synced.", id, chat);

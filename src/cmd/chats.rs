@@ -1,6 +1,5 @@
 use crate::app::App;
 use crate::out;
-use crate::out::markdown::{format_chats, format_chat_search_results, format_members, MemberMd, SearchChatResultMd};
 use crate::store::Store;
 use crate::Cli;
 use anyhow::Result;
@@ -283,29 +282,9 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     } else {
                         "Chats"
                     };
-                    out::write_markdown(&format_chats(&chats, title));
+                    cli.output.write_titled(&chats, title)?;
                 } else {
-                    println!(
-                        "{:<12} {:<30} {:<16} {:<8} LAST MESSAGE",
-                        "KIND", "NAME", "ID", "ARCH"
-                    );
-                    for c in &chats {
-                        let name = out::truncate(&c.name, 28);
-                        let ts = c
-                            .last_message_ts
-                            .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
-                            .unwrap_or_default();
-                        let kind_display = if c.is_forum {
-                            format!("{}[forum]", c.kind)
-                        } else {
-                            c.kind.clone()
-                        };
-                        let archived_display = if c.archived { "yes" } else { "" };
-                        println!(
-                            "{:<12} {:<30} {:<16} {:<8} {}",
-                            kind_display, name, c.id, archived_display, ts
-                        );
-                    }
+                    cli.output.write(&chats)?;
                 }
             }
         }
@@ -313,28 +292,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let chat = store.get_chat(*id).await?;
             match chat {
                 Some(c) => {
-                    if cli.output.is_json() {
-                        out::write_json(&c)?;
-                    } else if cli.output.is_markdown() {
-                        use crate::out::markdown::ToMarkdown;
-                        out::write_markdown(&c.to_markdown());
-                    } else {
-                        println!("ID: {}", c.id);
-                        println!("Kind: {}", c.kind);
-                        println!("Name: {}", c.name);
-                        if let Some(u) = &c.username {
-                            println!("Username: @{}", u);
-                        }
-                        if c.is_forum {
-                            println!("Forum: yes");
-                        }
-                        if c.archived {
-                            println!("Archived: yes");
-                        }
-                        if let Some(ts) = c.last_message_ts {
-                            println!("Last message: {}", ts.to_rfc3339());
-                        }
-                    }
+                    cli.output.write(&c)?;
                 }
                 None => {
                     anyhow::bail!(
@@ -471,37 +429,9 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     "members": members,
                 }))?;
             } else if cli.output.is_markdown() {
-                let members_md: Vec<MemberMd> = members.iter().map(|m| MemberMd {
-                    id: m.id,
-                    username: m.username.clone(),
-                    first_name: m.first_name.clone(),
-                    last_name: m.last_name.clone(),
-                    status: m.status.clone(),
-                    role: m.role.clone(),
-                }).collect();
-                out::write_markdown(&format_members(&members_md, &chat_name, *id));
+                cli.output.write_titled(&members, &format!("Members of \"{}\" ({})", chat_name, id))?;
             } else {
-                println!(
-                    "Members of \"{}\" ({}) - {} total:\n",
-                    chat_name,
-                    id,
-                    members.len()
-                );
-                println!(
-                    "{:<12} {:<20} {:<20} {:<20} {:<10} STATUS",
-                    "ID", "USERNAME", "FIRST_NAME", "LAST_NAME", "ROLE"
-                );
-                for m in &members {
-                    println!(
-                        "{:<12} {:<20} {:<20} {:<20} {:<10} {}",
-                        m.id,
-                        m.username.as_deref().unwrap_or("-"),
-                        out::truncate(m.first_name.as_deref().unwrap_or("-"), 18),
-                        out::truncate(m.last_name.as_deref().unwrap_or("-"), 18),
-                        m.role,
-                        m.status,
-                    );
-                }
+                cli.output.write(&members)?;
             }
         }
         ChatsCommand::Archive { id } => {
@@ -629,25 +559,9 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     "chats": results,
                 }))?;
             } else if cli.output.is_markdown() {
-                let results_md: Vec<SearchChatResultMd> = results.iter().map(|c| SearchChatResultMd {
-                    id: c.id,
-                    kind: c.kind.clone(),
-                    name: c.name.clone(),
-                    username: c.username.clone(),
-                }).collect();
-                out::write_markdown(&format_chat_search_results(&results_md, query));
+                cli.output.write_titled(&results, &format!("Search Results for \"{}\"", query))?;
             } else {
-                println!("Search results for \"{}\":\n", query);
-                println!("{:<12} {:<30} {:<16} USERNAME", "KIND", "NAME", "ID");
-                for c in &results {
-                    println!(
-                        "{:<12} {:<30} {:<16} {}",
-                        c.kind,
-                        out::truncate(&c.name, 28),
-                        c.id,
-                        c.username.as_deref().unwrap_or("-")
-                    );
-                }
+                cli.output.write(&results)?;
             }
         }
         ChatsCommand::Create {

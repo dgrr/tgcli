@@ -6,6 +6,12 @@
 //! - Each item as `## [Primary Name/ID]`
 //! - Key fields as bullet points with **bold** keys
 //! - Horizontal rules (`---`) between items
+//!
+//! NOTE: This module is being replaced by the serde-based serializers in
+//! `out/serializers/`. Most of these functions are now unused but kept
+//! for backwards compatibility.
+
+#![allow(dead_code)]
 
 use crate::store::{Chat, Contact, Message, Topic};
 use chrono::{DateTime, Utc};

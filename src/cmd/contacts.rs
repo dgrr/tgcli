@@ -1,5 +1,4 @@
 use crate::out;
-use crate::out::markdown::{format_contacts, ToMarkdown};
 use crate::store::Store;
 use crate::Cli;
 use anyhow::Result;
@@ -40,22 +39,9 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
             if cli.output.is_json() {
                 out::write_json(&contacts)?;
             } else if cli.output.is_markdown() {
-                out::write_markdown(&format_contacts(&contacts, "Contacts"));
+                cli.output.write_titled(&contacts, "Contacts")?;
             } else {
-                println!(
-                    "{:<16} {:<20} {:<20} {:<16} USERNAME",
-                    "ID", "FIRST", "LAST", "PHONE"
-                );
-                for c in &contacts {
-                    println!(
-                        "{:<16} {:<20} {:<20} {:<16} {}",
-                        c.user_id,
-                        out::truncate(&c.first_name, 18),
-                        out::truncate(&c.last_name, 18),
-                        out::truncate(&c.phone, 14),
-                        c.username.as_deref().unwrap_or(""),
-                    );
-                }
+                cli.output.write(&contacts)?;
             }
         }
         ContactsCommand::Search { query, limit } => {
@@ -64,42 +50,16 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
             if cli.output.is_json() {
                 out::write_json(&contacts)?;
             } else if cli.output.is_markdown() {
-                out::write_markdown(&format_contacts(&contacts, &format!("Contacts matching \"{}\"", query)));
+                cli.output.write_titled(&contacts, &format!("Contacts matching \"{}\"", query))?;
             } else {
-                println!(
-                    "{:<16} {:<20} {:<20} {:<16} USERNAME",
-                    "ID", "FIRST", "LAST", "PHONE"
-                );
-                for c in &contacts {
-                    println!(
-                        "{:<16} {:<20} {:<20} {:<16} {}",
-                        c.user_id,
-                        out::truncate(&c.first_name, 18),
-                        out::truncate(&c.last_name, 18),
-                        out::truncate(&c.phone, 14),
-                        c.username.as_deref().unwrap_or(""),
-                    );
-                }
+                cli.output.write(&contacts)?;
             }
         }
         ContactsCommand::Show { id } => {
             let contact = store.get_contact(*id).await?;
             match contact {
                 Some(c) => {
-                    if cli.output.is_json() {
-                        out::write_json(&c)?;
-                    } else if cli.output.is_markdown() {
-                        out::write_markdown(&c.to_markdown());
-                    } else {
-                        println!("ID: {}", c.user_id);
-                        println!("Name: {} {}", c.first_name, c.last_name);
-                        if let Some(u) = &c.username {
-                            println!("Username: @{}", u);
-                        }
-                        if !c.phone.is_empty() {
-                            println!("Phone: {}", c.phone);
-                        }
-                    }
+                    cli.output.write(&c)?;
                 }
                 None => {
                     anyhow::bail!(
