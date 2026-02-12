@@ -238,7 +238,7 @@ pub enum MessagesCommand {
         msg_id: i64,
         /// Output path (default: current directory with auto-detected filename)
         #[arg(long, short)]
-        output: Option<String>,
+        dest: Option<String>,
     },
 }
 
@@ -579,13 +579,13 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
         MessagesCommand::Download {
             chat,
             msg_id,
-            output,
+            dest,
         } => {
             // Download requires network access
             let app = App::new(cli).await?;
 
             let result = app
-                .download_media(*chat, *msg_id, output.as_deref())
+                .download_media(*chat, *msg_id, dest.as_deref())
                 .await?;
 
             if cli.output.is_json() {
