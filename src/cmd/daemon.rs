@@ -249,6 +249,14 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
         None
     };
 
+    // Load webhook config for firing on incoming messages
+    let webhook_config = app.store.get_webhook().await.ok().flatten();
+    if let Some(ref wh) = webhook_config {
+        if !args.quiet {
+            eprintln!("  Webhook active: {}", wh.url);
+        }
+    }
+
     if !args.quiet {
         eprintln!("Daemon ready. Press Ctrl+C to stop.");
     }
@@ -313,6 +321,13 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                     });
                                     println!("{}", serde_json::to_string(&obj).unwrap_or_default());
                                     let _ = std::io::stdout().flush();
+                                }
+
+                                // Fire webhook for incoming messages
+                                if !from_me {
+                                    if let Some(ref wh) = webhook_config {
+                                        crate::webhook::fire_webhook(wh, chat_id, sender_id, &text);
+                                    }
                                 }
 
                                 // Store message directly

@@ -7,7 +7,7 @@ use turso::{Builder, Connection, Database, Row};
 pub struct Store {
     #[allow(dead_code)]
     db: Database, // Must keep Database alive - dropping it invalidates the connection
-    conn: Connection,
+    pub(crate) conn: Connection,
     has_fts: bool,
 }
 

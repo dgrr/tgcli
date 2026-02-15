@@ -5,6 +5,7 @@ mod out;
 mod shutdown;
 mod store;
 mod tg;
+mod webhook;
 
 use clap::Parser;
 
