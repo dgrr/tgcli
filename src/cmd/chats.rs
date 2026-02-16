@@ -22,12 +22,9 @@ pub enum ChatsCommand {
         /// Filter by folder ID (fetches from Telegram API)
         #[arg(long)]
         folder: Option<i32>,
-        /// Show only archived chats (from local DB, or API with --folder 1)
+        /// Show only archived chats (queries Telegram API folder 1)
         #[arg(long)]
         archived: bool,
-        /// Show only non-archived chats (local DB filter)
-        #[arg(long, conflicts_with = "archived")]
-        active: bool,
     },
     /// Show a single chat
     Show {
@@ -250,39 +247,24 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             limit,
             folder,
             archived,
-            active,
         } => {
             // Use unlimited (i64::MAX) if no limit specified
             let effective_limit = limit.unwrap_or(i64::MAX);
-            
-            // If filtering by folder, fetch from Telegram API
-            if let Some(fid) = folder {
-                // Fetch chats from folder via Telegram API
+
+            // If --archived is set, query Telegram API folder 1 directly
+            if *archived {
+                list_folder_chats(cli, &store, 1, query.as_deref(), effective_limit).await?;
+            } else if let Some(fid) = folder {
+                // Fetch chats from specific folder via Telegram API
                 list_folder_chats(cli, &store, *fid, query.as_deref(), effective_limit).await?;
             } else {
-                // Use local store with optional archived filter
-                let archived_filter = if *archived {
-                    Some(true)
-                } else if *active {
-                    Some(false)
-                } else {
-                    None // Show all chats
-                };
-                let chats = store
-                    .list_chats(query.as_deref(), effective_limit, archived_filter)
-                    .await?;
+                // Use local store for all chats
+                let chats = store.list_chats(query.as_deref(), effective_limit).await?;
 
                 if cli.output.is_json() {
                     out::write_json(&chats)?;
                 } else if cli.output.is_markdown() {
-                    let title = if *archived {
-                        "Archived Chats"
-                    } else if *active {
-                        "Active Chats"
-                    } else {
-                        "Chats"
-                    };
-                    cli.output.write_titled(&chats, title)?;
+                    cli.output.write_titled(&chats, "Chats")?;
                 } else {
                     cli.output.write(&chats)?;
                 }

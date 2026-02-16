@@ -170,7 +170,6 @@ struct ChatSyncTaskResult {
     chat_username: Option<String>,
     is_forum: bool,
     access_hash: Option<i64>,
-    archived: bool,
     messages: Vec<FetchedMessage>,
     highest_msg_id: Option<i64>,
     latest_ts: Option<DateTime<Utc>>,
@@ -488,7 +487,6 @@ impl App {
                     None,
                     is_forum,
                     access_hash,
-                    false, // Not archived (regular dialogs)
                 )
                 .await?;
             chats_stored += 1;
@@ -559,7 +557,6 @@ impl App {
                         None,
                         is_forum,
                         access_hash,
-                        true, // Archived
                     )
                     .await?;
                 chats_stored += 1;
@@ -618,6 +615,21 @@ impl App {
         // Get all chats that have sync checkpoints
         let all_chats = self.store.list_chats_with_checkpoint().await?;
 
+        // If skip_archived or archived_only is set, fetch archived folder from Telegram
+        let archived_chat_ids: HashSet<i64> =
+            if opts.skip_archived || opts.archived_only {
+                if opts.show_progress {
+                    eprint!("\rFetching archived folder...");
+                }
+                let archived_peers = self.fetch_archived_dialogs().await?;
+                if opts.show_progress {
+                    eprint!("\r\x1b[K");
+                }
+                archived_peers.iter().map(|p| p.id().bare_id()).collect()
+            } else {
+                HashSet::new()
+            };
+
         // Filter chats to process
         let chat_filter = opts.chat_filter;
         let skip_archived = opts.skip_archived;
@@ -637,11 +649,12 @@ impl App {
                 if ignore_channels && chat.kind == "channel" {
                     return false;
                 }
-                // Filter by archived status
-                if skip_archived && chat.archived {
+                // Filter by archived status (using Telegram's folder info)
+                let is_archived = archived_chat_ids.contains(&chat.id);
+                if skip_archived && is_archived {
                     return false;
                 }
-                if archived_only && !chat.archived {
+                if archived_only && !is_archived {
                     return false;
                 }
                 // Must have peer info to sync
@@ -772,7 +785,6 @@ impl App {
                             chat_username: chat.username.clone(),
                             is_forum: chat.is_forum,
                             access_hash: chat.access_hash,
-                            archived: chat.archived,
                             messages: Vec::new(),
                             highest_msg_id: None,
                             latest_ts: None,
@@ -800,7 +812,6 @@ impl App {
                                 chat_username: chat.username.clone(),
                                 is_forum: chat.is_forum,
                                 access_hash: chat.access_hash,
-                                archived: chat.archived,
                                 messages: Vec::new(),
                                 highest_msg_id: None,
                                 latest_ts: None,
@@ -956,7 +967,6 @@ impl App {
                         chat_username: chat.username.clone(),
                         is_forum: chat.is_forum,
                         access_hash: chat.access_hash,
-                        archived: chat.archived,
                         messages,
                         highest_msg_id,
                         latest_ts,
@@ -1033,7 +1043,6 @@ impl App {
                         Some(ts),
                         result.is_forum,
                         result.access_hash,
-                        result.archived,
                     )
                     .await?;
             }
@@ -1222,7 +1231,6 @@ impl App {
                     None,
                     is_forum,
                     access_hash,
-                    false, // Not archived (regular dialogs)
                 )
                 .await?;
             chats_stored += 1;
@@ -1414,7 +1422,6 @@ impl App {
                         Some(ts),
                         is_forum,
                         access_hash,
-                        false, // Not archived (regular dialogs)
                     )
                     .await?;
             }
@@ -1532,7 +1539,6 @@ impl App {
                         None,
                         is_forum,
                         access_hash,
-                        true, // Archived
                     )
                     .await?;
                 chats_stored += 1;
@@ -1676,7 +1682,6 @@ impl App {
                             Some(ts),
                             is_forum,
                             access_hash,
-                            true, // Archived
                         )
                         .await?;
                 }

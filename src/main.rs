@@ -2,6 +2,7 @@ mod app;
 mod cmd;
 mod error;
 mod out;
+mod rpc;
 mod shutdown;
 mod store;
 mod tg;
@@ -16,8 +17,8 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "~/.tgcli")]
     pub store: String,
 
-    /// Output mode: text (default), json, or none
-    #[arg(long, global = true, value_enum, default_value = "text")]
+    /// Output mode: markdown (default), text, json, or none
+    #[arg(long, global = true, value_enum, default_value = "markdown")]
     pub output: out::OutputMode,
 
     #[command(subcommand)]

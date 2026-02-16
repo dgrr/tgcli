@@ -171,7 +171,6 @@ impl ToMarkdown for Chat {
             .field("Kind", &self.kind)
             .field_opt("Username", self.username.as_ref().map(|u| format!("@{}", u)).as_deref())
             .field_bool_if("Forum", self.is_forum)
-            .field_bool_if("Archived", self.archived)
             .field_datetime_opt("Last message", self.last_message_ts.as_ref());
 
         doc.build()
