@@ -20,6 +20,39 @@ pub struct App {
     pub updates_rx: Option<mpsc::UnboundedReceiver<UpdatesLike>>,
 }
 
+/// Lightweight app for send-only operations.
+/// Does NOT open the message store database, avoiding lock conflicts with daemon.
+pub struct SendApp {
+    pub tg: TgClient,
+    pub store_dir: String,
+}
+
+impl SendApp {
+    /// Create a SendApp for sending messages without opening the store.
+    /// This avoids database locking issues when daemon is running.
+    pub async fn new(cli: &Cli) -> Result<Self> {
+        let store_dir = cli.store_dir();
+        std::fs::create_dir_all(&store_dir)
+            .with_context(|| format!("Failed to create store directory '{}'", store_dir))?;
+
+        let session_path = format!("{}/session.db", store_dir);
+
+        let (tg, _updates_rx) = TgClient::connect_with_updates(&session_path)
+            .context("Failed to connect to Telegram")?;
+
+        if !tg
+            .client
+            .is_authorized()
+            .await
+            .context("Failed to check authorization status")?
+        {
+            anyhow::bail!("Session expired or not authenticated. Run `tgcli auth` first.");
+        }
+
+        Ok(SendApp { tg, store_dir })
+    }
+}
+
 impl App {
     pub async fn new(cli: &Cli) -> Result<Self> {
         let store_dir = cli.store_dir();

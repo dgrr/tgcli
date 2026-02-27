@@ -65,7 +65,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -196,7 +196,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg_id)
@@ -279,7 +279,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg_id)
@@ -542,7 +542,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -587,7 +587,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -644,7 +644,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -693,7 +693,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -748,7 +748,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg.id() as i64)
@@ -1019,7 +1019,7 @@ impl App {
 
         // Update chat's last_message_ts
         self.store
-            .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
+            .upsert_chat(chat_id, "user", "", None, Some(now), false, None)
             .await?;
 
         Ok(msg_id)
@@ -2382,5 +2382,332 @@ fn format_size(bytes: u64) -> String {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+// ============================================================================
+// SendApp implementations (lightweight, no store access)
+// ============================================================================
+
+use crate::app::SendApp;
+
+impl SendApp {
+    /// Resolve a chat ID to a PeerRef by iterating dialogs.
+    async fn resolve_peer_ref(&self, chat_id: i64) -> Result<PeerRef> {
+        let mut dialogs = self.tg.client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await? {
+            let peer = dialog.peer();
+            if peer.id().bare_id() == chat_id {
+                return Ok(PeerRef::from(peer));
+            }
+        }
+        anyhow::bail!(
+            "Chat {} not found. Run `tgcli sync` to refresh your chat list.",
+            chat_id
+        );
+    }
+
+    /// Send a text message to a chat by ID, returns the message ID.
+    /// Does NOT write to the local store (daemon will pick up via updates).
+    pub async fn send_text(&mut self, chat_id: i64, text: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let msg = self
+            .tg
+            .client
+            .send_message(peer_ref, InputMessage::new().text(text))
+            .await
+            .context_send(chat_id)?;
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a scheduled text message to a chat by ID, returns the message ID.
+    pub async fn send_text_scheduled(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        schedule_time: chrono::DateTime<Utc>,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let random_id: i64 = rand::rng().random();
+        let schedule_date = schedule_time.timestamp() as i32;
+
+        let request = tl::functions::messages::SendMessage {
+            no_webpage: true,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: None,
+            message: text.to_string(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: Some(schedule_date),
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context_send(chat_id)?;
+        App::extract_message_id_from_updates(&updates)
+    }
+
+    /// Send a text message as a reply to another message, returns the message ID.
+    pub async fn send_text_reply(
+        &mut self,
+        chat_id: i64,
+        text: &str,
+        reply_to_msg_id: i32,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let random_id: i64 = rand::rng().random();
+
+        let request = tl::functions::messages::SendMessage {
+            no_webpage: true,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: Some(
+                tl::types::InputReplyToMessage {
+                    reply_to_msg_id,
+                    top_msg_id: None,
+                    reply_to_peer_id: None,
+                    quote_text: None,
+                    quote_entities: None,
+                    quote_offset: None,
+                    monoforum_peer_id: None,
+                    todo_item_id: None,
+                }
+                .into(),
+            ),
+            message: text.to_string(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context_send(chat_id)?;
+        App::extract_message_id_from_updates(&updates)
+    }
+
+    /// Send a text message to a specific forum topic by ID, returns the message ID.
+    pub async fn send_text_to_topic(
+        &mut self,
+        chat_id: i64,
+        topic_id: i32,
+        text: &str,
+    ) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_peer: tl::enums::InputPeer = peer_ref.into();
+
+        let random_id: i64 = rand::rng().random();
+
+        let request = tl::functions::messages::SendMessage {
+            no_webpage: true,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            allow_paid_floodskip: false,
+            peer: input_peer,
+            reply_to: Some(
+                tl::types::InputReplyToMessage {
+                    reply_to_msg_id: topic_id,
+                    top_msg_id: Some(topic_id),
+                    reply_to_peer_id: None,
+                    quote_text: None,
+                    quote_entities: None,
+                    quote_offset: None,
+                    monoforum_peer_id: None,
+                    todo_item_id: None,
+                }
+                .into(),
+            ),
+            message: text.to_string(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let updates = self
+            .tg
+            .client
+            .invoke(&request)
+            .await
+            .context_send(chat_id)?;
+        App::extract_message_id_from_updates(&updates)
+    }
+
+    /// Send a sticker by file_id, returns the message ID.
+    pub async fn send_sticker(&mut self, chat_id: i64, file_id: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        let (doc_id, access_hash, file_reference) = decode_file_id(file_id)?;
+
+        let input_doc = tl::enums::InputDocument::Document(tl::types::InputDocument {
+            id: doc_id,
+            access_hash,
+            file_reference,
+        });
+
+        let input_media = tl::enums::InputMedia::Document(tl::types::InputMediaDocument {
+            spoiler: false,
+            id: input_doc,
+            ttl_seconds: None,
+            query: None,
+            video_cover: None,
+            video_timestamp: None,
+        });
+
+        let msg = self
+            .tg
+            .client
+            .send_message(peer_ref, InputMessage::new().text("").media(input_media))
+            .await
+            .context_send(chat_id)?;
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a photo from a file path, returns the message ID.
+    pub async fn send_photo(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context("Failed to upload photo")?;
+
+        let msg = self
+            .tg
+            .client
+            .send_message(peer_ref, InputMessage::new().text(caption).photo(uploaded))
+            .await
+            .context_send(chat_id)?;
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a video from a file path, returns the message ID.
+    pub async fn send_video(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context("Failed to upload video")?;
+
+        let msg = self
+            .tg
+            .client
+            .send_message(
+                peer_ref,
+                InputMessage::new()
+                    .text(caption)
+                    .document(uploaded)
+                    .attribute(Attribute::Video {
+                        round_message: false,
+                        supports_streaming: true,
+                        duration: Duration::from_secs(0),
+                        w: 0,
+                        h: 0,
+                    }),
+            )
+            .await
+            .context_send(chat_id)?;
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a file (document) from a file path, returns the message ID.
+    pub async fn send_file(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context("Failed to upload file")?;
+
+        let msg = self
+            .tg
+            .client
+            .send_message(
+                peer_ref,
+                InputMessage::new().text(caption).document(uploaded),
+            )
+            .await
+            .context_send(chat_id)?;
+        Ok(msg.id() as i64)
+    }
+
+    /// Send a voice message from a file path, returns the message ID.
+    pub async fn send_voice(&mut self, chat_id: i64, path: &Path, caption: &str) -> Result<i64> {
+        let peer_ref = self.resolve_peer_ref(chat_id).await?;
+
+        let uploaded = self
+            .tg
+            .client
+            .upload_file(path)
+            .await
+            .context("Failed to upload voice file")?;
+
+        let msg = self
+            .tg
+            .client
+            .send_message(
+                peer_ref,
+                InputMessage::new()
+                    .text(caption)
+                    .document(uploaded)
+                    .attribute(Attribute::Voice {
+                        duration: Duration::from_secs(0),
+                        waveform: None,
+                    }),
+            )
+            .await
+            .context_send(chat_id)?;
+        Ok(msg.id() as i64)
     }
 }

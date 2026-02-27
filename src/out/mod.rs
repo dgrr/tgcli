@@ -24,12 +24,12 @@ pub use serializers::{to_markdown, to_markdown_with_title, to_text, to_text_with
 pub enum OutputMode {
     /// No output
     None,
-    /// Human-readable text (default)
-    #[default]
+    /// Human-readable text
     Text,
     /// JSON output
     Json,
-    /// Markdown output
+    /// Markdown output (default)
+    #[default]
     Markdown,
 }
 

@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod drafts;
 pub mod export;
 pub mod folders;
+pub mod hook;
 pub mod messages;
 pub mod polls;
 pub mod profile;
@@ -70,6 +71,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: topics::TopicsCommand,
     },
+    /// Manage webhook for incoming messages
+    Hook {
+        #[command(subcommand)]
+        cmd: hook::HookCommand,
+    },
     /// Manage chat folders (filters)
     Folders {
         #[command(subcommand)]
@@ -119,6 +125,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Stickers { cmd } => stickers::run(&cli, cmd).await,
         Command::Polls { cmd } => polls::run(&cli, cmd).await,
         Command::Topics { cmd } => topics::run(&cli, cmd).await,
+        Command::Hook { cmd } => hook::run(&cli, cmd).await,
         Command::Folders { cmd } => folders::run(&cli, cmd).await,
         Command::Users { cmd } => users::run(&cli, cmd).await,
         Command::Typing(args) => typing::run(&cli, args).await,
