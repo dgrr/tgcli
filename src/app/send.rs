@@ -4,6 +4,7 @@ use crate::store::UpsertMessageParams;
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
+use grammers_client::parsers::{parse_html_message, parse_markdown_message};
 use grammers_client::types::Attribute;
 use grammers_client::InputMessage;
 use grammers_session::defs::PeerRef;
@@ -12,6 +13,24 @@ use rand::Rng;
 use std::path::Path;
 use std::time::Duration;
 use tl::enums::SendMessageAction;
+
+/// Parse message text according to parse_mode, returning (text, entities).
+/// parse_mode: "markdown", "html", or anything else for plain text.
+fn apply_parse_mode(text: &str, parse_mode: &str) -> (String, Option<Vec<tl::enums::MessageEntity>>) {
+    match parse_mode {
+        "markdown" => {
+            let (parsed_text, entities) = parse_markdown_message(text);
+            let ents = if entities.is_empty() { None } else { Some(entities) };
+            (parsed_text, ents)
+        }
+        "html" => {
+            let (parsed_text, entities) = parse_html_message(text);
+            let ents = if entities.is_empty() { None } else { Some(entities) };
+            (parsed_text, ents)
+        }
+        _ => (text.to_string(), None),
+    }
+}
 
 /// Result from searching chats via Telegram API.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -37,12 +56,17 @@ fn decode_file_id(file_id: &str) -> Result<(i64, i64, Vec<u8>)> {
 
 impl App {
     /// Send a text message to a chat by ID, returns the message ID.
-    pub async fn send_text(&mut self, chat_id: i64, text: &str) -> Result<i64> {
+    pub async fn send_text(&mut self, chat_id: i64, text: &str, parse_mode: &str) -> Result<i64> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
+        let input_msg = match parse_mode {
+            "markdown" => InputMessage::new().markdown(text),
+            "html" => InputMessage::new().html(text),
+            _ => InputMessage::new().text(text),
+        };
         let msg = self
             .tg
             .client
-            .send_message(peer_ref, InputMessage::new().text(text))
+            .send_message(peer_ref, input_msg)
             .await
             .context_send(chat_id)?;
 
@@ -78,12 +102,14 @@ impl App {
         chat_id: i64,
         text: &str,
         schedule_time: chrono::DateTime<Utc>,
+        parse_mode: &str,
     ) -> Result<i64> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         let input_peer: tl::enums::InputPeer = peer_ref.into();
 
         let random_id: i64 = rand::rng().random();
         let schedule_date = schedule_time.timestamp() as i32;
+        let (message_text, entities) = apply_parse_mode(text, parse_mode);
 
         let request = tl::functions::messages::SendMessage {
             no_webpage: true,
@@ -96,10 +122,10 @@ impl App {
             allow_paid_floodskip: false,
             peer: input_peer,
             reply_to: None,
-            message: text.to_string(),
+            message: message_text,
             random_id,
             reply_markup: None,
-            entities: None,
+            entities,
             schedule_date: Some(schedule_date),
             send_as: None,
             quick_reply_shortcut: None,
@@ -128,11 +154,13 @@ impl App {
         chat_id: i64,
         text: &str,
         reply_to_msg_id: i32,
+        parse_mode: &str,
     ) -> Result<i64> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         let input_peer: tl::enums::InputPeer = peer_ref.into();
 
         let random_id: i64 = rand::rng().random();
+        let (message_text, entities) = apply_parse_mode(text, parse_mode);
 
         let request = tl::functions::messages::SendMessage {
             no_webpage: true,
@@ -157,10 +185,10 @@ impl App {
                 }
                 .into(),
             ),
-            message: text.to_string(),
+            message: message_text,
             random_id,
             reply_markup: None,
-            entities: None,
+            entities,
             schedule_date: None,
             send_as: None,
             quick_reply_shortcut: None,
@@ -209,11 +237,13 @@ impl App {
         chat_id: i64,
         topic_id: i32,
         text: &str,
+        parse_mode: &str,
     ) -> Result<i64> {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
         let input_peer: tl::enums::InputPeer = peer_ref.into();
 
         let random_id: i64 = rand::rng().random();
+        let (message_text, entities) = apply_parse_mode(text, parse_mode);
 
         let request = tl::functions::messages::SendMessage {
             no_webpage: true,
@@ -238,10 +268,10 @@ impl App {
                 }
                 .into(),
             ),
-            message: text.to_string(),
+            message: message_text,
             random_id,
             reply_markup: None,
-            entities: None,
+            entities,
             schedule_date: None,
             send_as: None,
             quick_reply_shortcut: None,
