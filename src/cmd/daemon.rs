@@ -274,48 +274,27 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
         },
     );
 
-    // Spawn background sync task if backfill is enabled
-    let backfill_handle = if !args.no_backfill {
-        let cli_clone = cli.clone();
-        let ignore_ids = args.ignore_chat_ids.clone();
-        let ignore_chans = args.ignore_channels;
-        let backfill_running_clone = Arc::clone(&backfill_running);
-        let shutdown_ctrl_clone = shutdown_ctrl.clone();
-        let quiet = args.quiet;
-        let rpc_state_clone = rpc_state.clone();
-
-        Some(tokio::spawn(async move {
-            // Small delay to ensure update listener is fully established
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
-                _ = shutdown_ctrl_clone.cancelled() => {
-                    return Ok::<_, anyhow::Error>(());
-                }
-            }
-
-            if shutdown_ctrl_clone.is_triggered() {
-                return Ok::<_, anyhow::Error>(());
-            }
-
-            backfill_running_clone.store(true, Ordering::Relaxed);
-            if let Some(ref state) = rpc_state_clone {
+    // Run backfill sync sequentially (not concurrently) to avoid SQLite session locking.
+    // The update stream buffers incoming updates while sync runs, so we won't miss anything.
+    if !args.no_backfill {
+        if !shutdown_ctrl.is_triggered() {
+            backfill_running.store(true, Ordering::Relaxed);
+            if let Some(ref state) = rpc_state {
                 state.set_sync_running(true);
             }
 
-            if !quiet {
+            if !args.quiet {
                 eprintln!("Background sync starting...");
             }
             log::info!("Background sync starting");
-
-            let mut backfill_app = App::new(&cli_clone).await?;
 
             let opts = crate::app::sync::SyncOptions {
                 output: crate::app::sync::OutputMode::None,
                 mark_read: false,
                 download_media: false,
-                ignore_chat_ids: ignore_ids,
-                ignore_channels: ignore_chans,
-                show_progress: !quiet,
+                ignore_chat_ids: args.ignore_chat_ids.clone(),
+                ignore_channels: args.ignore_channels,
+                show_progress: !args.quiet,
                 incremental: true,
                 messages_per_chat: 50,
                 concurrency: 4,
@@ -325,9 +304,10 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                 archived_only: false,
             };
 
-            let result = backfill_app.sync(opts).await;
-            backfill_running_clone.store(false, Ordering::Relaxed);
-            if let Some(ref state) = rpc_state_clone {
+            // Use the SAME app instance - no second SqliteSession connection
+            let result = app.sync(opts).await;
+            backfill_running.store(false, Ordering::Relaxed);
+            if let Some(ref state) = rpc_state {
                 state.set_sync_running(false);
             }
 
@@ -337,7 +317,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                         "Background sync complete: {} chats, {} messages",
                         res.chats_stored, res.messages_stored
                     );
-                    if !quiet {
+                    if !args.quiet {
                         eprintln!(
                             "Background sync complete: {} chats, {} messages",
                             res.chats_stored, res.messages_stored
@@ -345,20 +325,16 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    if !shutdown_ctrl_clone.is_triggered() {
+                    if !shutdown_ctrl.is_triggered() {
                         log::error!("Background sync failed: {}", e);
-                        if !quiet {
+                        if !args.quiet {
                             eprintln!("Background sync failed: {}", e);
                         }
                     }
                 }
             }
-
-            Ok(())
-        }))
-    } else {
-        None
-    };
+        }
+    }
 
     // Load webhook config for firing on incoming messages
     let webhook_config = app.store.get_webhook().await.ok().flatten();
@@ -577,18 +553,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
     }
 
     // Graceful shutdown
-    let shutdown_timeout = Duration::from_secs(args.shutdown_timeout);
-
-    // Wait for backfill to finish
-    if let Some(handle) = backfill_handle {
-        if backfill_running.load(Ordering::Relaxed) {
-            if !args.quiet {
-                eprintln!("Waiting for background sync to complete (timeout: {}s)...", args.shutdown_timeout);
-            }
-            log::info!("Waiting for background sync (timeout: {}s)", args.shutdown_timeout);
-        }
-        let _ = tokio::time::timeout(shutdown_timeout, handle).await;
-    }
+    // (Backfill runs sequentially before the main loop, so it's already complete)
 
     // Mark TG as disconnected for RPC
     if let Some(ref state) = rpc_state {
