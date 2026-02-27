@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::SendApp;
 use crate::out;
 use crate::Cli;
 use anyhow::Result;
@@ -88,18 +88,18 @@ fn parse_schedule(
 }
 
 pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
-    let _store_dir = cli.store_dir();
-
     // Parse schedule options
     let schedule_time = parse_schedule(&args.schedule, &args.schedule_in)?;
+
+    // Use SendApp - lightweight client that doesn't open the store DB
+    // This avoids lock conflicts when daemon is running
+    let mut app = SendApp::new(cli).await?;
 
     // Handle sticker sending
     if let Some(ref sticker_id) = args.sticker {
         if args.topic.is_some() {
             anyhow::bail!("--topic is not supported with --sticker yet");
         }
-        // Stickers always use direct connection (no socket support yet)
-        let mut app = App::new(cli).await?;
         let msg_id = app.send_sticker(args.to, sticker_id).await?;
 
         if cli.output.is_json() {
@@ -120,7 +120,6 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         if args.topic.is_some() {
             anyhow::bail!("--topic is not supported with --photo yet");
         }
-        let mut app = App::new(cli).await?;
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_photo(args.to, photo_path, caption).await?;
 
@@ -142,7 +141,6 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         if args.topic.is_some() {
             anyhow::bail!("--topic is not supported with --video yet");
         }
-        let mut app = App::new(cli).await?;
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_video(args.to, video_path, caption).await?;
 
@@ -164,7 +162,6 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         if args.topic.is_some() {
             anyhow::bail!("--topic is not supported with --file yet");
         }
-        let mut app = App::new(cli).await?;
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_file(args.to, file_path, caption).await?;
 
@@ -186,7 +183,6 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         if args.topic.is_some() {
             anyhow::bail!("--topic is not supported with --voice yet");
         }
-        let mut app = App::new(cli).await?;
         let caption = args.caption.as_deref().unwrap_or("");
         let msg_id = app.send_voice(args.to, voice_path, caption).await?;
 
@@ -208,9 +204,6 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         .message
         .as_ref()
         .expect("message required when no sticker");
-
-    // Direct connection
-    let mut app = App::new(cli).await?;
 
     let msg_id = if let Some(topic_id) = args.topic {
         if schedule_time.is_some() {
