@@ -72,14 +72,6 @@ pub struct DaemonInstallArgs {
     #[arg(long, default_value = "~/.tgcli")]
     pub store: String,
 
-    /// Enable RPC server
-    #[arg(long, default_value_t = true)]
-    pub rpc: bool,
-
-    /// RPC server address
-    #[arg(long, default_value = "127.0.0.1:5556")]
-    pub rpc_addr: String,
-
     /// Don't run backfill on startup
     #[arg(long, default_value_t = true)]
     pub no_backfill: bool,
@@ -133,12 +125,6 @@ async fn install_service(_cli: &crate::Cli, args: &DaemonInstallArgs, platform: 
         store.clone(),
         "daemon".to_string(),
     ];
-
-    if args.rpc {
-        cmd_args.push("--rpc".to_string());
-        cmd_args.push("--rpc-addr".to_string());
-        cmd_args.push(args.rpc_addr.clone());
-    }
 
     if args.no_backfill {
         cmd_args.push("--no-backfill".to_string());
