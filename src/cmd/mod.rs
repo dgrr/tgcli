@@ -33,7 +33,7 @@ pub enum Command {
     Sync(sync::SyncArgs),
     /// Run persistent daemon for real-time message sync
     Daemon(daemon::DaemonArgs),
-    
+
     /// Manage daemon as a background service (install/start/stop)
     DaemonService(daemon_service::DaemonServiceArgs),
     /// Clear local database (keeps session)

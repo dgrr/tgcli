@@ -243,9 +243,20 @@ fn auto_detect_columns(items: &[Value]) -> Vec<ColumnDef> {
 
     // Common field order preference
     let preferred_order = [
-        "kind", "type", "name", "title", "first_name", "last_name",
-        "id", "user_id", "chat_id", "username", "phone",
-        "text", "status", "role",
+        "kind",
+        "type",
+        "name",
+        "title",
+        "first_name",
+        "last_name",
+        "id",
+        "user_id",
+        "chat_id",
+        "username",
+        "phone",
+        "text",
+        "status",
+        "role",
     ];
 
     let mut columns: Vec<ColumnDef> = Vec::new();
@@ -339,8 +350,16 @@ mod tests {
     #[test]
     fn test_table_output() {
         let items = vec![
-            TestItem { id: 1, name: "First".to_string(), active: true },
-            TestItem { id: 2, name: "Second".to_string(), active: false },
+            TestItem {
+                id: 1,
+                name: "First".to_string(),
+                active: true,
+            },
+            TestItem {
+                id: 2,
+                name: "Second".to_string(),
+                active: false,
+            },
         ];
         let text = to_text(&items);
         assert!(text.contains("NAME"));

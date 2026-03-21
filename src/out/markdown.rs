@@ -71,8 +71,11 @@ impl MarkdownDoc {
 
     /// Add a bullet point with bold key and boolean value (shows yes/no)
     pub fn field_bool(&mut self, key: &str, value: bool) -> &mut Self {
-        self.lines
-            .push(format!("- **{}**: {}", key, if value { "yes" } else { "no" }));
+        self.lines.push(format!(
+            "- **{}**: {}",
+            key,
+            if value { "yes" } else { "no" }
+        ));
         self
     }
 
@@ -92,8 +95,11 @@ impl MarkdownDoc {
 
     /// Add a bullet point with bold key and datetime value
     pub fn field_datetime(&mut self, key: &str, value: &DateTime<Utc>) -> &mut Self {
-        self.lines
-            .push(format!("- **{}**: {}", key, value.format("%Y-%m-%d %H:%M:%S UTC")));
+        self.lines.push(format!(
+            "- **{}**: {}",
+            key,
+            value.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
         self
     }
 
@@ -169,7 +175,10 @@ impl ToMarkdown for Chat {
         doc.h2(&display_name)
             .field_num("ID", self.id)
             .field("Kind", &self.kind)
-            .field_opt("Username", self.username.as_ref().map(|u| format!("@{}", u)).as_deref())
+            .field_opt(
+                "Username",
+                self.username.as_ref().map(|u| format!("@{}", u)).as_deref(),
+            )
             .field_bool_if("Forum", self.is_forum)
             .field_bool_if("Archived", self.archived)
             .field_datetime_opt("Last message", self.last_message_ts.as_ref());
@@ -268,7 +277,9 @@ impl ToMarkdown for Contact {
     fn to_markdown(&self) -> String {
         let mut doc = MarkdownDoc::new();
 
-        let display_name = format!("{} {}", self.first_name, self.last_name).trim().to_string();
+        let display_name = format!("{} {}", self.first_name, self.last_name)
+            .trim()
+            .to_string();
         let display_name = if display_name.is_empty() {
             format!("User {}", self.user_id)
         } else {
@@ -279,7 +290,10 @@ impl ToMarkdown for Contact {
             .field_num("ID", self.user_id)
             .field("First name", &self.first_name)
             .field("Last name", &self.last_name)
-            .field_opt("Username", self.username.as_ref().map(|u| format!("@{}", u)).as_deref());
+            .field_opt(
+                "Username",
+                self.username.as_ref().map(|u| format!("@{}", u)).as_deref(),
+            );
 
         if !self.phone.is_empty() {
             doc.field("Phone", &self.phone);
@@ -338,7 +352,11 @@ impl ToMarkdown for Topic {
 pub fn format_topics(topics: &[Topic], chat_name: &str, chat_id: i64) -> String {
     let mut doc = MarkdownDoc::new();
     doc.h1(&format!("Topics in \"{}\"", chat_name));
-    doc.text(&format!("*Chat ID: {} | {} topic(s)*", chat_id, topics.len()));
+    doc.text(&format!(
+        "*Chat ID: {} | {} topic(s)*",
+        chat_id,
+        topics.len()
+    ));
     doc.blank();
 
     for (i, topic) in topics.iter().enumerate() {
@@ -383,8 +401,7 @@ impl ToMarkdown for UserInfoMd {
             (None, None) => format!("User {}", self.id),
         };
 
-        doc.h1(&name)
-            .field_num("ID", self.id);
+        doc.h1(&name).field_num("ID", self.id);
 
         if let Some(ref u) = self.username {
             doc.field("Username", &format!("@{}", u));
@@ -400,12 +417,24 @@ impl ToMarkdown for UserInfoMd {
 
         // Flags
         let mut flags = Vec::new();
-        if self.is_bot { flags.push("🤖 Bot"); }
-        if self.is_verified { flags.push("✓ Verified"); }
-        if self.is_premium { flags.push("⭐ Premium"); }
-        if self.is_scam { flags.push("⚠️ Scam"); }
-        if self.is_fake { flags.push("⚠️ Fake"); }
-        if self.is_blocked { flags.push("🚫 Blocked"); }
+        if self.is_bot {
+            flags.push("🤖 Bot");
+        }
+        if self.is_verified {
+            flags.push("✓ Verified");
+        }
+        if self.is_premium {
+            flags.push("⭐ Premium");
+        }
+        if self.is_scam {
+            flags.push("⚠️ Scam");
+        }
+        if self.is_fake {
+            flags.push("⚠️ Fake");
+        }
+        if self.is_blocked {
+            flags.push("🚫 Blocked");
+        }
 
         if !flags.is_empty() {
             doc.blank().field("Flags", &flags.join(", "));
@@ -459,11 +488,21 @@ impl ToMarkdown for FolderInfoMd {
 
         // Filters
         let mut filters = Vec::new();
-        if self.contacts { filters.push("contacts"); }
-        if self.non_contacts { filters.push("non-contacts"); }
-        if self.groups { filters.push("groups"); }
-        if self.broadcasts { filters.push("broadcasts"); }
-        if self.bots { filters.push("bots"); }
+        if self.contacts {
+            filters.push("contacts");
+        }
+        if self.non_contacts {
+            filters.push("non-contacts");
+        }
+        if self.groups {
+            filters.push("groups");
+        }
+        if self.broadcasts {
+            filters.push("broadcasts");
+        }
+        if self.bots {
+            filters.push("bots");
+        }
 
         if !filters.is_empty() {
             doc.field("Includes", &filters.join(", "));
@@ -615,7 +654,11 @@ impl ToMarkdown for StickerMd {
 pub fn format_stickers(stickers: &[StickerMd], pack_name: &str, pack_title: &str) -> String {
     let mut doc = MarkdownDoc::new();
     doc.h1(&format!("Stickers: {}", pack_title));
-    doc.text(&format!("*Pack: {} | {} sticker(s)*", pack_name, stickers.len()));
+    doc.text(&format!(
+        "*Pack: {} | {} sticker(s)*",
+        pack_name,
+        stickers.len()
+    ));
     doc.blank();
 
     for (i, sticker) in stickers.iter().enumerate() {
@@ -669,7 +712,10 @@ impl ToMarkdown for MemberMd {
 
         doc.h2(&title)
             .field_num("ID", self.id)
-            .field_opt("Username", self.username.as_ref().map(|u| format!("@{}", u)).as_deref())
+            .field_opt(
+                "Username",
+                self.username.as_ref().map(|u| format!("@{}", u)).as_deref(),
+            )
             .field("Role", &self.role)
             .field("Status", &self.status);
 
@@ -681,7 +727,11 @@ impl ToMarkdown for MemberMd {
 pub fn format_members(members: &[MemberMd], chat_name: &str, chat_id: i64) -> String {
     let mut doc = MarkdownDoc::new();
     doc.h1(&format!("Members of \"{}\"", chat_name));
-    doc.text(&format!("*Chat ID: {} | {} member(s)*", chat_id, members.len()));
+    doc.text(&format!(
+        "*Chat ID: {} | {} member(s)*",
+        chat_id,
+        members.len()
+    ));
     doc.blank();
 
     for (i, member) in members.iter().enumerate() {
@@ -770,7 +820,10 @@ impl ToMarkdown for SearchChatResultMd {
         doc.h2(&display_name)
             .field_num("ID", self.id)
             .field("Kind", &self.kind)
-            .field_opt("Username", self.username.as_ref().map(|u| format!("@{}", u)).as_deref());
+            .field_opt(
+                "Username",
+                self.username.as_ref().map(|u| format!("@{}", u)).as_deref(),
+            );
 
         doc.build()
     }

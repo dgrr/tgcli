@@ -123,7 +123,12 @@ fn format_item(value: &Value, output: &mut String, config: &MarkdownConfig) {
             // Skip common heading fields that were used
             if matches!(key.as_str(), "name" | "title") && get_item_heading(obj, config).is_some() {
                 // Only skip if this field was actually used for heading
-                if obj.get(key).and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) {
+                if obj
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+                {
                     continue;
                 }
             }
@@ -137,7 +142,10 @@ fn format_item(value: &Value, output: &mut String, config: &MarkdownConfig) {
 }
 
 /// Get heading for an item from its fields.
-fn get_item_heading(obj: &serde_json::Map<String, Value>, config: &MarkdownConfig) -> Option<String> {
+fn get_item_heading(
+    obj: &serde_json::Map<String, Value>,
+    config: &MarkdownConfig,
+) -> Option<String> {
     // Try configured heading field first
     if let Some(ref field) = config.heading_field {
         if let Some(val) = obj.get(field) {
@@ -167,7 +175,11 @@ fn get_item_heading(obj: &serde_json::Map<String, Value>, config: &MarkdownConfi
     }
 
     // Fall back to ID if nothing else
-    if let Some(val) = obj.get("id").or_else(|| obj.get("user_id")).or_else(|| obj.get("chat_id")) {
+    if let Some(val) = obj
+        .get("id")
+        .or_else(|| obj.get("user_id"))
+        .or_else(|| obj.get("chat_id"))
+    {
         return Some(format_scalar(val));
     }
 
@@ -194,7 +206,11 @@ fn format_field(key: &str, value: &Value, output: &mut String, _config: &Markdow
             output.push_str(&format!("- **{}**:\n", humanize_key(key)));
             for (k, v) in obj {
                 if !matches!(v, Value::Null) {
-                    output.push_str(&format!("  - **{}**: {}\n", humanize_key(k), format_scalar(v)));
+                    output.push_str(&format!(
+                        "  - **{}**: {}\n",
+                        humanize_key(k),
+                        format_scalar(v)
+                    ));
                 }
             }
         }
@@ -295,8 +311,16 @@ mod tests {
     #[test]
     fn test_array_with_title() {
         let items = vec![
-            TestItem { id: 1, name: "First".to_string(), active: true },
-            TestItem { id: 2, name: "Second".to_string(), active: false },
+            TestItem {
+                id: 1,
+                name: "First".to_string(),
+                active: true,
+            },
+            TestItem {
+                id: 2,
+                name: "Second".to_string(),
+                active: false,
+            },
         ];
         let md = to_markdown_with_title(&items, "Test Items");
         assert!(md.contains("# Test Items"));

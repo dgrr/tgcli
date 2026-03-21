@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::out;
-use crate::out::markdown::{format_topics, format_messages};
+use crate::out::markdown::{format_messages, format_topics};
 use crate::store::{self, Store};
 use crate::Cli;
 use anyhow::Result;
@@ -129,7 +129,10 @@ pub async fn run(cli: &Cli, cmd: &TopicsCommand) -> Result<()> {
                     "messages": msgs,
                 }))?;
             } else if cli.output.is_markdown() {
-                out::write_markdown(&format_messages(&msgs, &format!("Messages in topic \"{}\"", topic_name)));
+                out::write_markdown(&format_messages(
+                    &msgs,
+                    &format!("Messages in topic \"{}\"", topic_name),
+                ));
             } else {
                 println!(
                     "Messages in topic \"{}\" (id={}) of chat {}:\n",

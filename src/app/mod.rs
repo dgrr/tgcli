@@ -108,7 +108,9 @@ impl App {
                     // Convert icon_emoji_id to string representation if present
                     let icon_emoji = topic.icon_emoji_id.map(|id| id.to_string());
 
-                    self.get_store().await?.upsert_topic(
+                    self.get_store()
+                        .await?
+                        .upsert_topic(
                             chat_id,
                             topic.id,
                             &topic.title,

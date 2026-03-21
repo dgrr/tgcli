@@ -254,7 +254,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
         } => {
             // Use unlimited (i64::MAX) if no limit specified
             let effective_limit = limit.unwrap_or(i64::MAX);
-            
+
             // If filtering by folder, fetch from Telegram API
             if let Some(fid) = folder {
                 // Fetch chats from folder via Telegram API
@@ -429,7 +429,8 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     "members": members,
                 }))?;
             } else if cli.output.is_markdown() {
-                cli.output.write_titled(&members, &format!("Members of \"{}\" ({})", chat_name, id))?;
+                cli.output
+                    .write_titled(&members, &format!("Members of \"{}\" ({})", chat_name, id))?;
             } else {
                 cli.output.write(&members)?;
             }
@@ -559,7 +560,8 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
                     "chats": results,
                 }))?;
             } else if cli.output.is_markdown() {
-                cli.output.write_titled(&results, &format!("Search Results for \"{}\"", query))?;
+                cli.output
+                    .write_titled(&results, &format!("Search Results for \"{}\"", query))?;
             } else {
                 cli.output.write(&results)?;
             }
@@ -989,7 +991,10 @@ async fn batch_archive(cli: &Cli, chat_ids: &[i64], archive: bool) -> Result<()>
         }))?;
     } else {
         for &chat_id in &resolved_ids {
-            let chat_name = app.get_store().await?.get_chat(chat_id)
+            let chat_name = app
+                .get_store()
+                .await?
+                .get_chat(chat_id)
                 .await?
                 .map(|c| c.name)
                 .unwrap_or_else(|| format!("Chat {}", chat_id));
@@ -1069,7 +1074,10 @@ async fn batch_pin(cli: &Cli, chat_ids: &[i64], pin: bool, folder_id: i32) -> Re
     } else {
         for (chat_id, success, _) in &results {
             if *success {
-                let chat_name = app.get_store().await?.get_chat(*chat_id)
+                let chat_name = app
+                    .get_store()
+                    .await?
+                    .get_chat(*chat_id)
                     .await?
                     .map(|c| c.name)
                     .unwrap_or_else(|| format!("Chat {}", chat_id));

@@ -50,7 +50,8 @@ pub async fn run(cli: &Cli, cmd: &ContactsCommand) -> Result<()> {
             if cli.output.is_json() {
                 out::write_json(&contacts)?;
             } else if cli.output.is_markdown() {
-                cli.output.write_titled(&contacts, &format!("Contacts matching \"{}\"", query))?;
+                cli.output
+                    .write_titled(&contacts, &format!("Contacts matching \"{}\"", query))?;
             } else {
                 cli.output.write(&contacts)?;
             }

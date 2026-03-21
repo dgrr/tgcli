@@ -479,7 +479,9 @@ impl App {
                 continue;
             }
 
-            self.get_store().await?.upsert_chat(
+            self.get_store()
+                .await?
+                .upsert_chat(
                     id,
                     &kind,
                     &name,
@@ -494,7 +496,9 @@ impl App {
 
             // Also store as contact if it's a user
             if let Peer::User(ref user) = peer {
-                self.get_store().await?.upsert_contact(
+                self.get_store()
+                    .await?
+                    .upsert_contact(
                         user.bare_id(),
                         user.username(),
                         user.first_name().unwrap_or(""),
@@ -548,7 +552,9 @@ impl App {
                     continue;
                 }
 
-                self.get_store().await?.upsert_chat(
+                self.get_store()
+                    .await?
+                    .upsert_chat(
                         id,
                         &kind,
                         &name,
@@ -563,7 +569,9 @@ impl App {
 
                 // Also store as contact if it's a user
                 if let Peer::User(ref user) = peer {
-                    self.get_store().await?.upsert_contact(
+                    self.get_store()
+                        .await?
+                        .upsert_contact(
                             user.bare_id(),
                             user.username(),
                             user.first_name().unwrap_or(""),
@@ -1000,7 +1008,9 @@ impl App {
 
             // Write messages to store (output was already streamed in the task)
             for msg in &result.messages {
-                self.get_store().await?.upsert_message(UpsertMessageParams {
+                self.get_store()
+                    .await?
+                    .upsert_message(UpsertMessageParams {
                         id: msg.id,
                         chat_id: result.chat_id,
                         sender_id: msg.sender_id,
@@ -1019,7 +1029,9 @@ impl App {
 
             // Update chat's last_message_ts if we got new messages
             if let Some(ts) = result.latest_ts {
-                self.get_store().await?.upsert_chat(
+                self.get_store()
+                    .await?
+                    .upsert_chat(
                         result.chat_id,
                         &result.chat_kind,
                         &result.chat_name,
@@ -1034,7 +1046,9 @@ impl App {
 
             // Update last_sync_message_id for incremental sync
             if let Some(high_id) = result.highest_msg_id {
-                self.get_store().await?.update_last_sync_message_id(result.chat_id, high_id)
+                self.get_store()
+                    .await?
+                    .update_last_sync_message_id(result.chat_id, high_id)
                     .await?;
             }
 
@@ -1045,7 +1059,10 @@ impl App {
                     if result.is_forum && !result.topic_counts.is_empty() {
                         let mut topic_summaries = Vec::new();
                         for (tid, msg_count) in &result.topic_counts {
-                            let topic = self.get_store().await?.get_topic(result.chat_id, *tid)
+                            let topic = self
+                                .get_store()
+                                .await?
+                                .get_topic(result.chat_id, *tid)
                                 .await
                                 .ok()
                                 .flatten();
@@ -1204,7 +1221,9 @@ impl App {
                 continue;
             }
 
-            self.get_store().await?.upsert_chat(
+            self.get_store()
+                .await?
+                .upsert_chat(
                     id,
                     &kind,
                     &name,
@@ -1219,7 +1238,9 @@ impl App {
 
             // Also store as contact if it's a user
             if let Peer::User(ref user) = peer {
-                self.get_store().await?.upsert_contact(
+                self.get_store()
+                    .await?
+                    .upsert_contact(
                         user.bare_id(),
                         user.username(),
                         user.first_name().unwrap_or(""),
@@ -1244,7 +1265,12 @@ impl App {
 
             // For incremental sync, get the last synced message ID
             let last_sync_id = if opts.incremental {
-                self.get_store().await?.get_last_sync_message_id(id).await.ok().flatten()
+                self.get_store()
+                    .await?
+                    .get_last_sync_message_id(id)
+                    .await
+                    .ok()
+                    .flatten()
             } else {
                 None
             };
@@ -1322,7 +1348,9 @@ impl App {
                 // Clone media_type for use in output after the move
                 let media_type_out = media_type.clone();
 
-                self.get_store().await?.upsert_message(UpsertMessageParams {
+                self.get_store()
+                    .await?
+                    .upsert_message(UpsertMessageParams {
                         id: msg.id() as i64,
                         chat_id: id,
                         sender_id,
@@ -1393,7 +1421,9 @@ impl App {
 
             // Update chat's last_message_ts
             if let Some(ts) = latest_ts {
-                self.get_store().await?.upsert_chat(
+                self.get_store()
+                    .await?
+                    .upsert_chat(
                         id,
                         &kind,
                         &name,
@@ -1408,7 +1438,10 @@ impl App {
 
             // Update last_sync_message_id for incremental sync
             if let Some(high_id) = highest_msg_id {
-                self.get_store().await?.update_last_sync_message_id(id, high_id).await?;
+                self.get_store()
+                    .await?
+                    .update_last_sync_message_id(id, high_id)
+                    .await?;
             }
 
             // If it's a forum, sync topics first so we can get names
@@ -1424,7 +1457,13 @@ impl App {
                 let new_topics: Vec<TopicSyncSummary> = if is_forum && !topic_counts.is_empty() {
                     let mut topic_summaries = Vec::new();
                     for (tid, msg_count) in &topic_counts {
-                        let topic = self.get_store().await?.get_topic(id, *tid).await.ok().flatten();
+                        let topic = self
+                            .get_store()
+                            .await?
+                            .get_topic(id, *tid)
+                            .await
+                            .ok()
+                            .flatten();
                         let topic_name = topic
                             .as_ref()
                             .map(|t| t.name.clone())
@@ -1510,7 +1549,9 @@ impl App {
                     continue;
                 }
 
-                self.get_store().await?.upsert_chat(
+                self.get_store()
+                    .await?
+                    .upsert_chat(
                         id,
                         &kind,
                         &name,
@@ -1525,7 +1566,9 @@ impl App {
 
                 // Also store as contact if it's a user
                 if let Peer::User(ref user) = peer {
-                    self.get_store().await?.upsert_contact(
+                    self.get_store()
+                        .await?
+                        .upsert_contact(
                             user.bare_id(),
                             user.username(),
                             user.first_name().unwrap_or(""),
@@ -1547,7 +1590,12 @@ impl App {
 
                 // For incremental sync, get the last synced message ID
                 let last_sync_id = if opts.incremental {
-                    self.get_store().await?.get_last_sync_message_id(id).await.ok().flatten()
+                    self.get_store()
+                        .await?
+                        .get_last_sync_message_id(id)
+                        .await
+                        .ok()
+                        .flatten()
                 } else {
                     None
                 };
@@ -1623,7 +1671,9 @@ impl App {
                         (msg.media().map(|_| "media".to_string()), None)
                     };
 
-                    self.get_store().await?.upsert_message(UpsertMessageParams {
+                    self.get_store()
+                        .await?
+                        .upsert_message(UpsertMessageParams {
                             id: msg.id() as i64,
                             chat_id: id,
                             sender_id,
@@ -1651,7 +1701,9 @@ impl App {
 
                 // Update chat's last_message_ts
                 if let Some(ts) = latest_ts {
-                    self.get_store().await?.upsert_chat(
+                    self.get_store()
+                        .await?
+                        .upsert_chat(
                             id,
                             &kind,
                             &name,
@@ -1666,7 +1718,10 @@ impl App {
 
                 // Update last_sync_message_id for incremental sync
                 if let Some(high_id) = highest_msg_id {
-                    self.get_store().await?.update_last_sync_message_id(id, high_id).await?;
+                    self.get_store()
+                        .await?
+                        .update_last_sync_message_id(id, high_id)
+                        .await?;
                 }
 
                 // If it's a forum, sync topics first so we can get names
@@ -1687,7 +1742,13 @@ impl App {
                     {
                         let mut topic_summaries = Vec::new();
                         for (tid, msg_count) in &topic_counts {
-                            let topic = self.get_store().await?.get_topic(id, *tid).await.ok().flatten();
+                            let topic = self
+                                .get_store()
+                                .await?
+                                .get_topic(id, *tid)
+                                .await
+                                .ok()
+                                .flatten();
                             let topic_name = topic
                                 .as_ref()
                                 .map(|t| t.name.clone())

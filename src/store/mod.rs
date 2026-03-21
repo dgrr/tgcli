@@ -108,7 +108,7 @@ impl Store {
             .build()
             .await
             .context("Failed to open database")?;
-        
+
         // Create a temporary connection for migrations and PRAGMAs
         let conn = db.connect().context("Failed to connect for migration")?;
 
@@ -118,15 +118,12 @@ impl Store {
         let _ = conn.query("PRAGMA synchronous=NORMAL", ()).await;
         let _ = conn.query("PRAGMA cache_size=-64000", ()).await;
 
-        let mut store = Store {
-            db,
-            has_fts: false,
-        };
+        let mut store = Store { db, has_fts: false };
         store.migrate(&conn).await?;
-        
+
         // Drop the migration connection immediately
         drop(conn);
-        
+
         Ok(store)
     }
 
@@ -205,49 +202,84 @@ impl Store {
         .context("Failed to create topics table")?;
 
         // Add media_path column if it doesn't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE messages ADD COLUMN media_path TEXT", ()).await;
+        let _ = conn
+            .execute("ALTER TABLE messages ADD COLUMN media_path TEXT", ())
+            .await;
 
         // Add is_forum column if it doesn't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE chats ADD COLUMN is_forum INTEGER DEFAULT 0", ()).await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE chats ADD COLUMN is_forum INTEGER DEFAULT 0",
+                (),
+            )
+            .await;
 
         // Ensure any NULL is_forum values are set to 0 (migration for existing DBs)
-        let _ = conn.execute("UPDATE chats SET is_forum = 0 WHERE is_forum IS NULL", ()).await;
+        let _ = conn
+            .execute("UPDATE chats SET is_forum = 0 WHERE is_forum IS NULL", ())
+            .await;
 
         // Add topic_id column if it doesn't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER", ()).await;
+        let _ = conn
+            .execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER", ())
+            .await;
 
         // Add last_sync_message_id column if it doesn't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE chats ADD COLUMN last_sync_message_id INTEGER", ()).await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE chats ADD COLUMN last_sync_message_id INTEGER",
+                (),
+            )
+            .await;
 
         // Add access_hash column if it doesn't exist (migration for local-only sync)
-        let _ = conn.execute("ALTER TABLE chats ADD COLUMN access_hash INTEGER", ()).await;
+        let _ = conn
+            .execute("ALTER TABLE chats ADD COLUMN access_hash INTEGER", ())
+            .await;
 
         // Add unread_count column to topics if it doesn't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE topics ADD COLUMN unread_count INTEGER DEFAULT 0", ()).await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE topics ADD COLUMN unread_count INTEGER DEFAULT 0",
+                (),
+            )
+            .await;
 
         // Add archived column to chats if it doesn't exist (migration for existing DBs)
-        let _ = conn.execute("ALTER TABLE chats ADD COLUMN archived INTEGER DEFAULT 0", ()).await;
+        let _ = conn
+            .execute(
+                "ALTER TABLE chats ADD COLUMN archived INTEGER DEFAULT 0",
+                (),
+            )
+            .await;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts)",
             (),
         )
         .await?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)", ())
-            .await?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)", ())
-            .await?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)",
+            (),
+        )
+        .await?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)",
+            (),
+        )
+        .await?;
 
         // Try to create FTS5 table
-        let fts_result = conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        let fts_result = conn
+            .execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                 text,
                 content='messages',
                 content_rowid='rowid'
             )",
-            (),
-        )
-        .await;
+                (),
+            )
+            .await;
 
         if fts_result.is_err() {
             self.has_fts = false;
@@ -256,13 +288,14 @@ impl Store {
         }
 
         // Create triggers for FTS
-        let trigger1 = conn.execute(
-            "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+        let trigger1 = conn
+            .execute(
+                "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
                 INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
             END",
-            (),
-        )
-        .await;
+                (),
+            )
+            .await;
 
         let trigger2 = conn.execute(
             "CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
@@ -312,11 +345,12 @@ impl Store {
             );
             // Rebuild the entire FTS index from scratch
             let _ = conn.execute("DELETE FROM messages_fts", ()).await;
-            let rebuild_result = conn.execute(
-                "INSERT INTO messages_fts(rowid, text) SELECT rowid, text FROM messages",
-                (),
-            )
-            .await;
+            let rebuild_result = conn
+                .execute(
+                    "INSERT INTO messages_fts(rowid, text) SELECT rowid, text FROM messages",
+                    (),
+                )
+                .await;
             if let Err(e) = rebuild_result {
                 log::warn!("Failed to populate FTS5 index: {}", e);
             } else {
@@ -348,7 +382,7 @@ impl Store {
         let ts_str = last_message_ts.map(|t| t.to_rfc3339());
         let is_forum_int = is_forum as i64;
         let archived_int = archived as i64;
-        
+
         let conn = self.get_conn().await?;
         conn.execute(
             "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum, access_hash, archived)
@@ -429,7 +463,9 @@ impl Store {
     /// Delete a chat from local database. Returns true if a chat was deleted.
     pub async fn delete_chat(&self, id: i64) -> Result<bool> {
         let conn = self.get_conn().await?;
-        let affected = conn.execute("DELETE FROM chats WHERE id = ?1", [id]).await?;
+        let affected = conn
+            .execute("DELETE FROM chats WHERE id = ?1", [id])
+            .await?;
         Ok(affected > 0)
     }
 
@@ -483,7 +519,8 @@ impl Store {
     #[allow(dead_code)]
     pub async fn get_highest_message_id(&self, chat_id: i64) -> Result<Option<i64>> {
         let conn = self.get_conn().await?;
-        let mut rows = conn.query("SELECT MAX(id) FROM messages WHERE chat_id = ?1", [chat_id])
+        let mut rows = conn
+            .query("SELECT MAX(id) FROM messages WHERE chat_id = ?1", [chat_id])
             .await?;
         if let Some(row) = rows.next().await? {
             Ok(row.get::<Option<i64>>(0)?)
@@ -495,7 +532,9 @@ impl Store {
     /// Delete all messages for a chat from local database. Returns count of deleted messages.
     pub async fn delete_messages_by_chat(&self, chat_id: i64) -> Result<u64> {
         let conn = self.get_conn().await?;
-        let affected = conn.execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id]).await?;
+        let affected = conn
+            .execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id])
+            .await?;
         Ok(affected)
     }
 
@@ -680,7 +719,7 @@ impl Store {
 
     pub async fn list_messages(&self, p: ListMessagesParams) -> Result<Vec<Message>> {
         let conn = self.get_conn().await?;
-        
+
         // Build dynamic SQL using positional parameters
         let mut conditions = vec!["1=1".to_string()];
         let mut param_idx = 1;
@@ -1139,7 +1178,9 @@ impl Store {
         // Get all chat IDs that have messages
         let chat_ids: Vec<i64> = {
             let conn = self.get_conn().await?;
-            let mut rows = conn.query("SELECT DISTINCT chat_id FROM messages", ()).await?;
+            let mut rows = conn
+                .query("SELECT DISTINCT chat_id FROM messages", ())
+                .await?;
             let mut ids = Vec::new();
             while let Some(row) = rows.next().await? {
                 ids.push(row.get::<i64>(0)?);

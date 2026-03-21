@@ -361,7 +361,10 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                         "global": true,
                     }))?;
                 } else if cli.output.is_markdown() {
-                    cli.output.write_titled(&results, &format!("Global Search Results for \"{}\"", query))?;
+                    cli.output.write_titled(
+                        &results,
+                        &format!("Global Search Results for \"{}\"", query),
+                    )?;
                 } else {
                     cli.output.write(&results)?;
                     eprintln!("\nSearched via Telegram API (global search)");
@@ -388,7 +391,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                         "global": false,
                     }))?;
                 } else if cli.output.is_markdown() {
-                    cli.output.write_titled(&msgs, &format!("Search Results for \"{}\"", query))?;
+                    cli.output
+                        .write_titled(&msgs, &format!("Search Results for \"{}\"", query))?;
                 } else {
                     cli.output.write(&msgs)?;
                     if !store.has_fts() {
@@ -408,7 +412,8 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             if cli.output.is_json() {
                 out::write_json(&msgs)?;
             } else if cli.output.is_markdown() {
-                cli.output.write_titled(&msgs, &format!("Context for Message {}", id))?;
+                cli.output
+                    .write_titled(&msgs, &format!("Context for Message {}", id))?;
             } else {
                 cli.output.write(&msgs)?;
             }
@@ -576,17 +581,11 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
                 );
             }
         }
-        MessagesCommand::Download {
-            chat,
-            msg_id,
-            dest,
-        } => {
+        MessagesCommand::Download { chat, msg_id, dest } => {
             // Download requires network access
             let app = App::new(cli).await?;
 
-            let result = app
-                .download_media(*chat, *msg_id, dest.as_deref())
-                .await?;
+            let result = app.download_media(*chat, *msg_id, dest.as_deref()).await?;
 
             if cli.output.is_json() {
                 out::write_json(&serde_json::json!({

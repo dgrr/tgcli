@@ -59,13 +59,16 @@ pub async fn run(cli: &Cli, cmd: &DraftsCommand) -> Result<()> {
                     "drafts": enriched,
                 }))?;
             } else if cli.output.is_markdown() {
-                let drafts_md: Vec<DraftMd> = enriched.iter().map(|d| DraftMd {
-                    chat_id: d.chat_id,
-                    chat_name: d.chat_name.clone(),
-                    text: d.text.clone(),
-                    date: d.date.clone(),
-                    reply_to_msg_id: d.reply_to_msg_id,
-                }).collect();
+                let drafts_md: Vec<DraftMd> = enriched
+                    .iter()
+                    .map(|d| DraftMd {
+                        chat_id: d.chat_id,
+                        chat_name: d.chat_name.clone(),
+                        text: d.text.clone(),
+                        date: d.date.clone(),
+                        reply_to_msg_id: d.reply_to_msg_id,
+                    })
+                    .collect();
                 out::write_markdown(&format_drafts(&drafts_md));
             } else if enriched.is_empty() {
                 println!("No drafts found.");

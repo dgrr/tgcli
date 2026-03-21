@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::out;
-use crate::out::markdown::{format_folders, format_folder_chats, FolderInfoMd, FolderChatMd};
+use crate::out::markdown::{format_folder_chats, format_folders, FolderChatMd, FolderInfoMd};
 use crate::Cli;
 use anyhow::Result;
 use clap::Subcommand;
@@ -171,19 +171,22 @@ async fn list_folders(cli: &Cli) -> Result<()> {
     if cli.output.is_json() {
         out::write_json(&folders)?;
     } else if cli.output.is_markdown() {
-        let folders_md: Vec<FolderInfoMd> = folders.iter().map(|f| FolderInfoMd {
-            id: f.id,
-            title: f.title.clone(),
-            emoticon: f.emoticon.clone(),
-            pinned_count: f.pinned_count,
-            include_count: f.include_count,
-            exclude_count: f.exclude_count,
-            contacts: f.contacts.unwrap_or(false),
-            non_contacts: f.non_contacts.unwrap_or(false),
-            groups: f.groups.unwrap_or(false),
-            broadcasts: f.broadcasts.unwrap_or(false),
-            bots: f.bots.unwrap_or(false),
-        }).collect();
+        let folders_md: Vec<FolderInfoMd> = folders
+            .iter()
+            .map(|f| FolderInfoMd {
+                id: f.id,
+                title: f.title.clone(),
+                emoticon: f.emoticon.clone(),
+                pinned_count: f.pinned_count,
+                include_count: f.include_count,
+                exclude_count: f.exclude_count,
+                contacts: f.contacts.unwrap_or(false),
+                non_contacts: f.non_contacts.unwrap_or(false),
+                groups: f.groups.unwrap_or(false),
+                broadcasts: f.broadcasts.unwrap_or(false),
+                bots: f.bots.unwrap_or(false),
+            })
+            .collect();
         out::write_markdown(&format_folders(&folders_md));
     } else {
         println!(
@@ -439,12 +442,15 @@ async fn show_folder(cli: &Cli, folder_id: i32) -> Result<()> {
             "chats": chats,
         }))?;
     } else if cli.output.is_markdown() {
-        let chats_md: Vec<FolderChatMd> = chats.iter().map(|c| FolderChatMd {
-            id: c.id,
-            name: c.name.clone(),
-            kind: c.kind.clone(),
-            pinned: c.pinned,
-        }).collect();
+        let chats_md: Vec<FolderChatMd> = chats
+            .iter()
+            .map(|c| FolderChatMd {
+                id: c.id,
+                name: c.name.clone(),
+                kind: c.kind.clone(),
+                pinned: c.pinned,
+            })
+            .collect();
         out::write_markdown(&format_folder_chats(&chats_md, &title, folder_id));
     } else {
         println!("Folder: {} (ID: {})\n", title, folder_id);

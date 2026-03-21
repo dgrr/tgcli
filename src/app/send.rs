@@ -16,16 +16,27 @@ use tl::enums::SendMessageAction;
 
 /// Parse message text according to parse_mode, returning (text, entities).
 /// parse_mode: "markdown", "html", or anything else for plain text.
-fn apply_parse_mode(text: &str, parse_mode: &str) -> (String, Option<Vec<tl::enums::MessageEntity>>) {
+fn apply_parse_mode(
+    text: &str,
+    parse_mode: &str,
+) -> (String, Option<Vec<tl::enums::MessageEntity>>) {
     match parse_mode {
         "markdown" => {
             let (parsed_text, entities) = parse_markdown_message(text);
-            let ents = if entities.is_empty() { None } else { Some(entities) };
+            let ents = if entities.is_empty() {
+                None
+            } else {
+                Some(entities)
+            };
             (parsed_text, ents)
         }
         "html" => {
             let (parsed_text, entities) = parse_html_message(text);
-            let ents = if entities.is_empty() { None } else { Some(entities) };
+            let ents = if entities.is_empty() {
+                None
+            } else {
+                Some(entities)
+            };
             (parsed_text, ents)
         }
         _ => (text.to_string(), None),
@@ -71,7 +82,8 @@ impl App {
             .context_send(chat_id)?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -88,7 +100,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -206,7 +219,8 @@ impl App {
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg_id,
                 chat_id,
@@ -223,7 +237,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -291,7 +306,8 @@ impl App {
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg_id,
                 chat_id,
@@ -308,7 +324,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -419,7 +436,8 @@ impl App {
         ))?;
 
         // Update local store
-        self.get_store().await?
+        self.get_store()
+            .await?
             .update_message_text(chat_id, msg_id, new_text)
             .await?;
 
@@ -554,7 +572,8 @@ impl App {
             .context(format!("Failed to send sticker to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -571,7 +590,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -599,7 +619,8 @@ impl App {
             .context(format!("Failed to send photo to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -616,7 +637,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -656,7 +678,8 @@ impl App {
             .context(format!("Failed to send video to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -673,7 +696,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -705,7 +729,8 @@ impl App {
             .context(format!("Failed to send file to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -722,7 +747,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -760,7 +786,8 @@ impl App {
             .context(format!("Failed to send voice message to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -777,7 +804,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -910,7 +938,8 @@ impl App {
             let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
             let media_type = msg.media().map(|_| "media".to_string());
 
-            self.get_store().await?
+            self.get_store()
+                .await?
                 .upsert_message(UpsertMessageParams {
                     id: msg.id() as i64,
                     chat_id,
@@ -1031,7 +1060,8 @@ impl App {
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_message(UpsertMessageParams {
                 id: msg_id,
                 chat_id,
@@ -1048,7 +1078,8 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.get_store().await?
+        self.get_store()
+            .await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
