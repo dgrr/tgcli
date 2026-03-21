@@ -315,8 +315,8 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                     let _ = std::io::stdout().flush();
                                 }
 
-                                // Store message directly
-                                if let Err(e) = app.store.upsert_message(UpsertMessageParams {
+                                // Store message directly - get fresh store for each operation
+                                if let Err(e) = app.get_store().await?.upsert_message(UpsertMessageParams {
                                     id: msg.id() as i64,
                                     chat_id,
                                     sender_id,
@@ -342,7 +342,8 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
 
                                 // Check existing chat's archived status, default to false for new chats
                                 let archived = app
-                                    .store
+                                    .get_store()
+                                    .await?
                                     .get_chat(chat_id)
                                     .await
                                     .ok()
@@ -350,7 +351,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                     .map(|c| c.archived)
                                     .unwrap_or(false);
 
-                                if let Err(e) = app.store.upsert_chat(
+                                if let Err(e) = app.get_store().await?.upsert_chat(
                                     chat_id,
                                     chat_kind,
                                     &chat_name,
@@ -364,7 +365,7 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                 }
 
                                 // Update last sync message ID
-                                if let Err(e) = app.store.update_last_sync_message_id(chat_id, msg.id() as i64).await {
+                                if let Err(e) = app.get_store().await?.update_last_sync_message_id(chat_id, msg.id() as i64).await {
                                     log::error!("Failed to update last_sync_message_id: {}", e);
                                 }
                             }
@@ -401,8 +402,8 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                     let _ = std::io::stdout().flush();
                                 }
 
-                                // Update message text
-                                if let Err(e) = app.store.update_message_text(chat_id, msg.id() as i64, &text).await {
+                                // Update message text - get fresh store for each operation
+                                if let Err(e) = app.get_store().await?.update_message_text(chat_id, msg.id() as i64, &text).await {
                                     log::error!("Failed to update edited message: {}", e);
                                 }
                             }

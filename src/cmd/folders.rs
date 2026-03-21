@@ -479,7 +479,7 @@ async fn resolve_peer_to_chat(
     };
 
     // Try to get name from local store
-    let name = if let Some(chat) = app.store.get_chat(id).await? {
+    let name = if let Some(chat) = app.get_store().await?.get_chat(id).await? {
         chat.name
     } else {
         format!("ID:{}", id)
@@ -794,7 +794,7 @@ async fn remove_from_folder(cli: &Cli, chat_id: i64, folder_id: i32) -> Result<(
 /// Resolve a chat ID to an InputPeer by iterating dialogs
 async fn resolve_chat_to_input_peer(app: &App, chat_id: i64) -> Result<tl::enums::InputPeer> {
     // First check local store for chat info
-    let chat = app.store.get_chat(chat_id).await?;
+    let chat: Option<crate::store::Chat> = app.get_store().await?.get_chat(chat_id).await?;
 
     // Try to find via session
     let channel_peer_id = PeerId::channel(chat_id);

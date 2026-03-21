@@ -989,9 +989,7 @@ async fn batch_archive(cli: &Cli, chat_ids: &[i64], archive: bool) -> Result<()>
         }))?;
     } else {
         for &chat_id in &resolved_ids {
-            let chat_name = app
-                .store
-                .get_chat(chat_id)
+            let chat_name = app.get_store().await?.get_chat(chat_id)
                 .await?
                 .map(|c| c.name)
                 .unwrap_or_else(|| format!("Chat {}", chat_id));
@@ -1071,9 +1069,7 @@ async fn batch_pin(cli: &Cli, chat_ids: &[i64], pin: bool, folder_id: i32) -> Re
     } else {
         for (chat_id, success, _) in &results {
             if *success {
-                let chat_name = app
-                    .store
-                    .get_chat(*chat_id)
+                let chat_name = app.get_store().await?.get_chat(*chat_id)
                     .await?
                     .map(|c| c.name)
                     .unwrap_or_else(|| format!("Chat {}", chat_id));

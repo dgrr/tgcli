@@ -12,7 +12,6 @@ use tokio::sync::mpsc;
 
 pub struct App {
     pub tg: TgClient,
-    pub store: Store,
     pub store_dir: String,
     #[allow(dead_code)]
     pub json: bool,
@@ -21,6 +20,11 @@ pub struct App {
 }
 
 impl App {
+    /// Get a fresh Store instance with a new Database connection.
+    /// The Database will be dropped when the Store goes out of scope.
+    pub async fn get_store(&self) -> Result<Store> {
+        Store::open(&self.store_dir).await
+    }
     pub async fn new(cli: &Cli) -> Result<Self> {
         let store_dir = cli.store_dir();
         std::fs::create_dir_all(&store_dir)
@@ -41,13 +45,8 @@ impl App {
             anyhow::bail!("Session expired or not authenticated. Run `tgcli auth` first.");
         }
 
-        let store = Store::open(&store_dir)
-            .await
-            .context("Failed to open message store database")?;
-
         Ok(App {
             tg,
-            store,
             store_dir,
             json: cli.output.is_json(),
             updates_rx: Some(updates_rx),
@@ -64,13 +63,8 @@ impl App {
 
         let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)
             .context("Failed to connect to Telegram")?;
-        let store = Store::open(&store_dir)
-            .await
-            .context("Failed to open message store database")?;
-
         Ok(App {
             tg,
-            store,
             store_dir,
             json: cli.output.is_json(),
             updates_rx: Some(updates_rx),
@@ -114,8 +108,7 @@ impl App {
                     // Convert icon_emoji_id to string representation if present
                     let icon_emoji = topic.icon_emoji_id.map(|id| id.to_string());
 
-                    self.store
-                        .upsert_topic(
+                    self.get_store().await?.upsert_topic(
                             chat_id,
                             topic.id,
                             &topic.title,

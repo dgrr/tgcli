@@ -71,7 +71,7 @@ impl App {
             .context_send(chat_id)?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -88,7 +88,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -206,7 +206,7 @@ impl App {
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg_id,
                 chat_id,
@@ -223,7 +223,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -291,7 +291,7 @@ impl App {
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg_id,
                 chat_id,
@@ -308,7 +308,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -419,7 +419,7 @@ impl App {
         ))?;
 
         // Update local store
-        self.store
+        self.get_store().await?
             .update_message_text(chat_id, msg_id, new_text)
             .await?;
 
@@ -554,7 +554,7 @@ impl App {
             .context(format!("Failed to send sticker to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -571,7 +571,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -599,7 +599,7 @@ impl App {
             .context(format!("Failed to send photo to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -616,7 +616,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -656,7 +656,7 @@ impl App {
             .context(format!("Failed to send video to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -673,7 +673,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -705,7 +705,7 @@ impl App {
             .context(format!("Failed to send file to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -722,7 +722,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -760,7 +760,7 @@ impl App {
             .context(format!("Failed to send voice message to chat {}", chat_id))?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg.id() as i64,
                 chat_id,
@@ -777,7 +777,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
@@ -869,7 +869,7 @@ impl App {
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
 
         // Check if this chat is a forum
-        let chat = self.store.get_chat(chat_id).await?;
+        let chat = self.get_store().await?.get_chat(chat_id).await?;
         let is_forum = chat.map(|c| c.is_forum).unwrap_or(false);
 
         let mut message_iter = self.tg.client.iter_messages(peer_ref);
@@ -910,7 +910,7 @@ impl App {
             let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
             let media_type = msg.media().map(|_| "media".to_string());
 
-            self.store
+            self.get_store().await?
                 .upsert_message(UpsertMessageParams {
                     id: msg.id() as i64,
                     chat_id,
@@ -1031,7 +1031,7 @@ impl App {
         let msg_id = Self::extract_message_id_from_updates(&updates)?;
 
         let now = Utc::now();
-        self.store
+        self.get_store().await?
             .upsert_message(UpsertMessageParams {
                 id: msg_id,
                 chat_id,
@@ -1048,7 +1048,7 @@ impl App {
             .await?;
 
         // Update chat's last_message_ts
-        self.store
+        self.get_store().await?
             .upsert_chat(chat_id, "user", "", None, Some(now), false, None, false)
             .await?;
 
