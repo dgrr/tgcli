@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[derive(Args, Debug, Clone)]
 pub struct DaemonArgs {
     /// Don't run background sync (only listen for new updates)
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = true)] // Default to true to avoid lock conflicts on startup
     pub no_backfill: bool,
 
     /// Download media files for incoming messages
