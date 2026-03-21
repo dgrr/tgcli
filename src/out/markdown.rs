@@ -338,7 +338,7 @@ impl ToMarkdown for Topic {
         doc.h2(&display_name)
             .field_num("Topic ID", self.topic_id)
             .field_num("Chat ID", self.chat_id)
-            .field(&"Color", &format!("#{:06X}", self.icon_color));
+            .field("Color", &format!("#{:06X}", self.icon_color));
 
         if self.unread_count > 0 {
             doc.field_num("Unread", self.unread_count);

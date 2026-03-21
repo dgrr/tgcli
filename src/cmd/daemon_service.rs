@@ -31,7 +31,7 @@ fn generate_service_domain(store: &str) -> String {
         format!("com.tgcli.sync.{}", suffix)
     } else {
         // Fallback for custom paths - replace - and . with _
-        format!("com.tgcli.{}", filename.replace('-', "_").replace('.', "_"))
+        format!("com.tgcli.{}", filename.replace(['-', '.'], "_"))
     }
 }
 
@@ -576,7 +576,7 @@ fn get_installed_domains(platform: &str) -> Result<Vec<String>> {
     if let Ok(entries) = fs::read_dir(&config_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == extension) {
+            if path.extension().is_some_and(|ext| ext == extension) {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                     if filename.starts_with("com.tgcli.")
                         && filename.ends_with(&format!(".{}", extension))
