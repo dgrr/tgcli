@@ -5,9 +5,7 @@ use std::path::Path;
 use turso::{Builder, Connection, Database, Row};
 
 pub struct Store {
-    #[allow(dead_code)]
-    db: Database, // Must keep Database alive - dropping it invalidates the connection
-    conn: Connection,
+    db: Database, // Must keep Database alive - dropping it invalidates connections
     has_fts: bool,
 }
 
@@ -110,7 +108,9 @@ impl Store {
             .build()
             .await
             .context("Failed to open database")?;
-        let conn = db.connect().context("Failed to connect to database")?;
+        
+        // Create a temporary connection for migrations and PRAGMAs
+        let conn = db.connect().context("Failed to connect for migration")?;
 
         // PRAGMAs that set values return the new value, so use query and ignore results
         let _ = conn.query("PRAGMA journal_mode=WAL", ()).await;
@@ -120,173 +120,134 @@ impl Store {
 
         let mut store = Store {
             db,
-            conn,
             has_fts: false,
         };
-        store.migrate().await?;
+        store.migrate(&conn).await?;
+        
+        // Drop the migration connection immediately
+        drop(conn);
+        
         Ok(store)
     }
 
-    async fn migrate(&mut self) -> Result<()> {
+    /// Get a new connection for a single operation.
+    /// Connection is dropped automatically when it goes out of scope.
+    pub(crate) async fn get_conn(&self) -> Result<Connection> {
+        self.db.connect().context("Failed to create connection")
+    }
+
+    async fn migrate(&mut self, conn: &Connection) -> Result<()> {
         // Create tables one at a time (turso execute doesn't support multiple statements)
-        self.conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS chats (
-                    id INTEGER PRIMARY KEY,
-                    kind TEXT NOT NULL DEFAULT 'user',
-                    name TEXT NOT NULL DEFAULT '',
-                    username TEXT,
-                    last_message_ts TEXT,
-                    is_forum INTEGER DEFAULT 0,
-                    last_sync_message_id INTEGER
-                )",
-                (),
-            )
-            .await
-            .context("Failed to create chats table")?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS chats (
+                id INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'user',
+                name TEXT NOT NULL DEFAULT '',
+                username TEXT,
+                last_message_ts TEXT,
+                is_forum INTEGER DEFAULT 0,
+                last_sync_message_id INTEGER,
+                access_hash INTEGER,
+                archived INTEGER DEFAULT 0
+            )",
+            (),
+        )
+        .await
+        .context("Failed to create chats table")?;
 
-        self.conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS contacts (
-                    user_id INTEGER PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT NOT NULL DEFAULT '',
-                    last_name TEXT NOT NULL DEFAULT '',
-                    phone TEXT NOT NULL DEFAULT ''
-                )",
-                (),
-            )
-            .await
-            .context("Failed to create contacts table")?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS contacts (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT NOT NULL DEFAULT '',
+                last_name TEXT NOT NULL DEFAULT '',
+                phone TEXT NOT NULL DEFAULT ''
+            )",
+            (),
+        )
+        .await
+        .context("Failed to create contacts table")?;
 
-        self.conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER NOT NULL,
-                    chat_id INTEGER NOT NULL,
-                    sender_id INTEGER NOT NULL DEFAULT 0,
-                    ts TEXT NOT NULL,
-                    edit_ts TEXT,
-                    from_me INTEGER NOT NULL DEFAULT 0,
-                    text TEXT NOT NULL DEFAULT '',
-                    media_type TEXT,
-                    media_path TEXT,
-                    reply_to_id INTEGER,
-                    topic_id INTEGER,
-                    PRIMARY KEY (chat_id, id)
-                )",
-                (),
-            )
-            .await
-            .context("Failed to create messages table")?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL DEFAULT 0,
+                ts TEXT NOT NULL,
+                edit_ts TEXT,
+                from_me INTEGER NOT NULL DEFAULT 0,
+                text TEXT NOT NULL DEFAULT '',
+                media_type TEXT,
+                media_path TEXT,
+                reply_to_id INTEGER,
+                topic_id INTEGER,
+                PRIMARY KEY (chat_id, id)
+            )",
+            (),
+        )
+        .await
+        .context("Failed to create messages table")?;
 
         // Create topics table for forum groups
-        self.conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS topics (
-                    chat_id INTEGER NOT NULL,
-                    topic_id INTEGER NOT NULL,
-                    name TEXT NOT NULL DEFAULT '',
-                    icon_color INTEGER NOT NULL DEFAULT 0,
-                    icon_emoji TEXT,
-                    PRIMARY KEY (chat_id, topic_id)
-                )",
-                (),
-            )
-            .await
-            .context("Failed to create topics table")?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS topics (
+                chat_id INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                icon_color INTEGER NOT NULL DEFAULT 0,
+                icon_emoji TEXT,
+                unread_count INTEGER DEFAULT 0,
+                PRIMARY KEY (chat_id, topic_id)
+            )",
+            (),
+        )
+        .await
+        .context("Failed to create topics table")?;
 
         // Add media_path column if it doesn't exist (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute("ALTER TABLE messages ADD COLUMN media_path TEXT", ())
-            .await;
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN media_path TEXT", ()).await;
 
         // Add is_forum column if it doesn't exist (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute(
-                "ALTER TABLE chats ADD COLUMN is_forum INTEGER DEFAULT 0",
-                (),
-            )
-            .await;
+        let _ = conn.execute("ALTER TABLE chats ADD COLUMN is_forum INTEGER DEFAULT 0", ()).await;
 
         // Ensure any NULL is_forum values are set to 0 (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute("UPDATE chats SET is_forum = 0 WHERE is_forum IS NULL", ())
-            .await;
+        let _ = conn.execute("UPDATE chats SET is_forum = 0 WHERE is_forum IS NULL", ()).await;
 
         // Add topic_id column if it doesn't exist (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER", ())
-            .await;
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN topic_id INTEGER", ()).await;
 
         // Add last_sync_message_id column if it doesn't exist (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute(
-                "ALTER TABLE chats ADD COLUMN last_sync_message_id INTEGER",
-                (),
-            )
-            .await;
+        let _ = conn.execute("ALTER TABLE chats ADD COLUMN last_sync_message_id INTEGER", ()).await;
 
         // Add access_hash column if it doesn't exist (migration for local-only sync)
-        let _ = self
-            .conn
-            .execute("ALTER TABLE chats ADD COLUMN access_hash INTEGER", ())
-            .await;
+        let _ = conn.execute("ALTER TABLE chats ADD COLUMN access_hash INTEGER", ()).await;
 
         // Add unread_count column to topics if it doesn't exist (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute(
-                "ALTER TABLE topics ADD COLUMN unread_count INTEGER DEFAULT 0",
-                (),
-            )
-            .await;
+        let _ = conn.execute("ALTER TABLE topics ADD COLUMN unread_count INTEGER DEFAULT 0", ()).await;
 
         // Add archived column to chats if it doesn't exist (migration for existing DBs)
-        let _ = self
-            .conn
-            .execute(
-                "ALTER TABLE chats ADD COLUMN archived INTEGER DEFAULT 0",
-                (),
-            )
-            .await;
+        let _ = conn.execute("ALTER TABLE chats ADD COLUMN archived INTEGER DEFAULT 0", ()).await;
 
-        self.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts)",
-                (),
-            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat_id, ts)",
+            (),
+        )
+        .await?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)", ())
             .await?;
-        self.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)",
-                (),
-            )
-            .await?;
-        self.conn
-            .execute(
-                "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)",
-                (),
-            )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)", ())
             .await?;
 
         // Try to create FTS5 table
-        let fts_result = self
-            .conn
-            .execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-                    text,
-                    content='messages',
-                    content_rowid='rowid'
-                )",
-                (),
-            )
-            .await;
+        let fts_result = conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                text,
+                content='messages',
+                content_rowid='rowid'
+            )",
+            (),
+        )
+        .await;
 
         if fts_result.is_err() {
             self.has_fts = false;
@@ -295,36 +256,30 @@ impl Store {
         }
 
         // Create triggers for FTS
-        let trigger1 = self
-            .conn
-            .execute(
-                "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-                    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-                END",
-                (),
-            )
-            .await;
+        let trigger1 = conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+                INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+            END",
+            (),
+        )
+        .await;
 
-        let trigger2 = self
-            .conn
-            .execute(
-                "CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-                    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-                END",
-                (),
-            )
-            .await;
+        let trigger2 = conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+            END",
+            (),
+        )
+        .await;
 
-        let trigger3 = self
-            .conn
-            .execute(
-                "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-                    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-                    INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-                END",
-                (),
-            )
-            .await;
+        let trigger3 = conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+                INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+                INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+            END",
+            (),
+        )
+        .await;
 
         // All FTS setup succeeded
         self.has_fts = trigger1.is_ok() && trigger2.is_ok() && trigger3.is_ok();
@@ -334,19 +289,15 @@ impl Store {
         }
 
         // Check if FTS index needs to be populated from existing messages
-        // Compare row counts: if messages exist but FTS is empty/underpopulated, rebuild
         let msg_count: i64 = {
-            let mut rows = self.conn.query("SELECT COUNT(*) FROM messages", ()).await?;
+            let mut rows = conn.query("SELECT COUNT(*) FROM messages", ()).await?;
             rows.next()
                 .await?
                 .map(|r| r.get(0).unwrap_or(0))
                 .unwrap_or(0)
         };
         let fts_count: i64 = {
-            let mut rows = self
-                .conn
-                .query("SELECT COUNT(*) FROM messages_fts", ())
-                .await?;
+            let mut rows = conn.query("SELECT COUNT(*) FROM messages_fts", ()).await?;
             rows.next()
                 .await?
                 .map(|r| r.get(0).unwrap_or(0))
@@ -360,14 +311,12 @@ impl Store {
                 msg_count
             );
             // Rebuild the entire FTS index from scratch
-            let _ = self.conn.execute("DELETE FROM messages_fts", ()).await;
-            let rebuild_result = self
-                .conn
-                .execute(
-                    "INSERT INTO messages_fts(rowid, text) SELECT rowid, text FROM messages",
-                    (),
-                )
-                .await;
+            let _ = conn.execute("DELETE FROM messages_fts", ()).await;
+            let rebuild_result = conn.execute(
+                "INSERT INTO messages_fts(rowid, text) SELECT rowid, text FROM messages",
+                (),
+            )
+            .await;
             if let Err(e) = rebuild_result {
                 log::warn!("Failed to populate FTS5 index: {}", e);
             } else {
@@ -399,22 +348,23 @@ impl Store {
         let ts_str = last_message_ts.map(|t| t.to_rfc3339());
         let is_forum_int = is_forum as i64;
         let archived_int = archived as i64;
-        self.conn
-            .execute(
-                "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum, access_hash, archived)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                 ON CONFLICT(id) DO UPDATE SET
-                    kind = COALESCE(excluded.kind, kind),
-                    name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
-                    username = COALESCE(excluded.username, username),
-                    last_message_ts = CASE WHEN excluded.last_message_ts IS NOT NULL AND (excluded.last_message_ts > last_message_ts OR last_message_ts IS NULL)
-                        THEN excluded.last_message_ts ELSE last_message_ts END,
-                    is_forum = CASE WHEN excluded.is_forum = 1 THEN 1 ELSE is_forum END,
-                    access_hash = COALESCE(excluded.access_hash, access_hash),
-                    archived = excluded.archived",
-                (id, kind, name, username, ts_str, is_forum_int, access_hash, archived_int),
-            )
-            .await?;
+        
+        let conn = self.get_conn().await?;
+        conn.execute(
+            "INSERT INTO chats (id, kind, name, username, last_message_ts, is_forum, access_hash, archived)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                kind = COALESCE(excluded.kind, kind),
+                name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
+                username = COALESCE(excluded.username, username),
+                last_message_ts = CASE WHEN excluded.last_message_ts IS NOT NULL AND (excluded.last_message_ts > last_message_ts OR last_message_ts IS NULL)
+                    THEN excluded.last_message_ts ELSE last_message_ts END,
+                is_forum = CASE WHEN excluded.is_forum = 1 THEN 1 ELSE is_forum END,
+                access_hash = COALESCE(excluded.access_hash, access_hash),
+                archived = excluded.archived",
+            (id, kind, name, username, ts_str.as_deref(), is_forum_int, access_hash, archived_int),
+        )
+        .await?;
         Ok(())
     }
 
@@ -424,6 +374,7 @@ impl Store {
         limit: i64,
         archived_only: Option<bool>,
     ) -> Result<Vec<Chat>> {
+        let conn = self.get_conn().await?;
         let mut chats = Vec::new();
 
         // Build archived filter clause
@@ -441,7 +392,7 @@ impl Store {
                  ORDER BY last_message_ts DESC LIMIT ?2",
                 archived_clause
             );
-            let mut rows = self.conn.query(&sql, (pattern.as_str(), limit)).await?;
+            let mut rows = conn.query(&sql, (pattern.as_str(), limit)).await?;
             while let Some(row) = rows.next().await? {
                 chats.push(row_to_chat(&row)?);
             }
@@ -452,7 +403,7 @@ impl Store {
                  ORDER BY last_message_ts DESC LIMIT ?1",
                 archived_clause
             );
-            let mut rows = self.conn.query(&sql, [limit]).await?;
+            let mut rows = conn.query(&sql, [limit]).await?;
             while let Some(row) = rows.next().await? {
                 chats.push(row_to_chat(&row)?);
             }
@@ -461,8 +412,8 @@ impl Store {
     }
 
     pub async fn get_chat(&self, id: i64) -> Result<Option<Chat>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash, archived FROM chats WHERE id = ?1",
                 [id],
@@ -477,18 +428,15 @@ impl Store {
 
     /// Delete a chat from local database. Returns true if a chat was deleted.
     pub async fn delete_chat(&self, id: i64) -> Result<bool> {
-        let affected = self
-            .conn
-            .execute("DELETE FROM chats WHERE id = ?1", [id])
-            .await?;
+        let conn = self.get_conn().await?;
+        let affected = conn.execute("DELETE FROM chats WHERE id = ?1", [id]).await?;
         Ok(affected > 0)
     }
 
     /// Get the last sync message ID for a chat.
-    /// This is the highest message ID we've synced for incremental sync.
     pub async fn get_last_sync_message_id(&self, chat_id: i64) -> Result<Option<i64>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT last_sync_message_id FROM chats WHERE id = ?1",
                 [chat_id],
@@ -502,10 +450,9 @@ impl Store {
     }
 
     /// List all chats that have a last_sync_message_id checkpoint set.
-    /// Used for --local-only sync to skip iter_dialogs().
     pub async fn list_chats_with_checkpoint(&self) -> Result<Vec<Chat>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT id, kind, name, username, last_message_ts, is_forum, last_sync_message_id, access_hash, archived 
                  FROM chats WHERE last_sync_message_id IS NOT NULL 
@@ -521,24 +468,22 @@ impl Store {
     }
 
     /// Update the last sync message ID for a chat.
-    /// Only updates if new_id is higher than the current value.
     pub async fn update_last_sync_message_id(&self, chat_id: i64, new_id: i64) -> Result<()> {
-        self.conn
-            .execute(
-                "UPDATE chats SET last_sync_message_id = ?2 
-                 WHERE id = ?1 AND (last_sync_message_id IS NULL OR last_sync_message_id < ?2)",
-                (chat_id, new_id),
-            )
-            .await?;
+        let conn = self.get_conn().await?;
+        conn.execute(
+            "UPDATE chats SET last_sync_message_id = ?2 
+             WHERE id = ?1 AND (last_sync_message_id IS NULL OR last_sync_message_id < ?2)",
+            (chat_id, new_id),
+        )
+        .await?;
         Ok(())
     }
 
     /// Get the highest message ID we have stored for a chat.
     #[allow(dead_code)]
     pub async fn get_highest_message_id(&self, chat_id: i64) -> Result<Option<i64>> {
-        let mut rows = self
-            .conn
-            .query("SELECT MAX(id) FROM messages WHERE chat_id = ?1", [chat_id])
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query("SELECT MAX(id) FROM messages WHERE chat_id = ?1", [chat_id])
             .await?;
         if let Some(row) = rows.next().await? {
             Ok(row.get::<Option<i64>>(0)?)
@@ -549,10 +494,8 @@ impl Store {
 
     /// Delete all messages for a chat from local database. Returns count of deleted messages.
     pub async fn delete_messages_by_chat(&self, chat_id: i64) -> Result<u64> {
-        let affected = self
-            .conn
-            .execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id])
-            .await?;
+        let conn = self.get_conn().await?;
+        let affected = conn.execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id]).await?;
         Ok(affected)
     }
 
@@ -567,31 +510,31 @@ impl Store {
         icon_emoji: Option<&str>,
         unread_count: i32,
     ) -> Result<()> {
-        self.conn
-            .execute(
-                "INSERT INTO topics (chat_id, topic_id, name, icon_color, icon_emoji, unread_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(chat_id, topic_id) DO UPDATE SET
-                    name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
-                    icon_color = excluded.icon_color,
-                    icon_emoji = COALESCE(excluded.icon_emoji, icon_emoji),
-                    unread_count = excluded.unread_count",
-                (
-                    chat_id,
-                    topic_id,
-                    name,
-                    icon_color,
-                    icon_emoji,
-                    unread_count,
-                ),
-            )
-            .await?;
+        let conn = self.get_conn().await?;
+        conn.execute(
+            "INSERT INTO topics (chat_id, topic_id, name, icon_color, icon_emoji, unread_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(chat_id, topic_id) DO UPDATE SET
+                name = CASE WHEN excluded.name != '' THEN excluded.name ELSE name END,
+                icon_color = excluded.icon_color,
+                icon_emoji = COALESCE(excluded.icon_emoji, icon_emoji),
+                unread_count = excluded.unread_count",
+            (
+                chat_id,
+                topic_id,
+                name,
+                icon_color,
+                icon_emoji,
+                unread_count,
+            ),
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn list_topics(&self, chat_id: i64) -> Result<Vec<Topic>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT chat_id, topic_id, name, icon_color, icon_emoji, unread_count FROM topics
                  WHERE chat_id = ?1 ORDER BY topic_id",
@@ -606,8 +549,8 @@ impl Store {
     }
 
     pub async fn get_topic(&self, chat_id: i64, topic_id: i32) -> Result<Option<Topic>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT chat_id, topic_id, name, icon_color, icon_emoji, unread_count FROM topics
                  WHERE chat_id = ?1 AND topic_id = ?2",
@@ -631,25 +574,25 @@ impl Store {
         last_name: &str,
         phone: &str,
     ) -> Result<()> {
-        self.conn
-            .execute(
-                "INSERT INTO contacts (user_id, username, first_name, last_name, phone)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(user_id) DO UPDATE SET
-                    username = COALESCE(excluded.username, username),
-                    first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE first_name END,
-                    last_name = CASE WHEN excluded.last_name != '' THEN excluded.last_name ELSE last_name END,
-                    phone = CASE WHEN excluded.phone != '' THEN excluded.phone ELSE phone END",
-                (user_id, username, first_name, last_name, phone),
-            )
-            .await?;
+        let conn = self.get_conn().await?;
+        conn.execute(
+            "INSERT INTO contacts (user_id, username, first_name, last_name, phone)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(user_id) DO UPDATE SET
+                username = COALESCE(excluded.username, username),
+                first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE first_name END,
+                last_name = CASE WHEN excluded.last_name != '' THEN excluded.last_name ELSE last_name END,
+                phone = CASE WHEN excluded.phone != '' THEN excluded.phone ELSE phone END",
+            (user_id, username, first_name, last_name, phone),
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn search_contacts(&self, query: &str, limit: i64) -> Result<Vec<Contact>> {
         let pattern = format!("%{}%", query);
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT user_id, username, first_name, last_name, phone FROM contacts
                  WHERE first_name LIKE ?1 OR last_name LIKE ?1 OR username LIKE ?1 OR phone LIKE ?1
@@ -665,8 +608,8 @@ impl Store {
     }
 
     pub async fn get_contact(&self, user_id: i64) -> Result<Option<Contact>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT user_id, username, first_name, last_name, phone FROM contacts WHERE user_id = ?1",
                 [user_id],
@@ -687,7 +630,8 @@ impl Store {
             ),
             None => "SELECT user_id, username, first_name, last_name, phone FROM contacts ORDER BY first_name".to_string(),
         };
-        let mut rows = self.conn.query(&query, ()).await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query(&query, ()).await?;
         let mut contacts = Vec::new();
         while let Some(row) = rows.next().await? {
             contacts.push(row_to_contact(&row)?);
@@ -702,46 +646,44 @@ impl Store {
         let edit_ts_str = p.edit_ts.map(|t| t.to_rfc3339());
         let from_me_int = p.from_me as i64;
 
-        self.conn
-            .execute(
-                "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(chat_id, id) DO UPDATE SET
-                    sender_id = excluded.sender_id,
-                    ts = excluded.ts,
-                    edit_ts = COALESCE(excluded.edit_ts, edit_ts),
-                    from_me = excluded.from_me,
-                    text = CASE WHEN excluded.text != '' THEN excluded.text ELSE text END,
-                    media_type = COALESCE(excluded.media_type, media_type),
-                    media_path = COALESCE(excluded.media_path, media_path),
-                    reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
-                    topic_id = COALESCE(excluded.topic_id, topic_id)",
-                (
-                    p.id,
-                    p.chat_id,
-                    p.sender_id,
-                    ts_str.as_str(),
-                    edit_ts_str.as_deref(),
-                    from_me_int,
-                    p.text.as_str(),
-                    p.media_type.as_deref(),
-                    p.media_path.as_deref(),
-                    p.reply_to_id,
-                    p.topic_id,
-                ),
-            )
-            .await?;
+        let conn = self.get_conn().await?;
+        conn.execute(
+            "INSERT INTO messages (id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(chat_id, id) DO UPDATE SET
+                sender_id = excluded.sender_id,
+                ts = excluded.ts,
+                edit_ts = COALESCE(excluded.edit_ts, edit_ts),
+                from_me = excluded.from_me,
+                text = CASE WHEN excluded.text != '' THEN excluded.text ELSE text END,
+                media_type = COALESCE(excluded.media_type, media_type),
+                media_path = COALESCE(excluded.media_path, media_path),
+                reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id),
+                topic_id = COALESCE(excluded.topic_id, topic_id)",
+            (
+                p.id,
+                p.chat_id,
+                p.sender_id,
+                ts_str.as_str(),
+                edit_ts_str.as_deref(),
+                from_me_int,
+                p.text.as_str(),
+                p.media_type.as_deref(),
+                p.media_path.as_deref(),
+                p.reply_to_id,
+                p.topic_id,
+            ),
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn list_messages(&self, p: ListMessagesParams) -> Result<Vec<Message>> {
+        let conn = self.get_conn().await?;
+        
         // Build dynamic SQL using positional parameters
         let mut conditions = vec!["1=1".to_string()];
         let mut param_idx = 1;
-
-        // We'll build the SQL with positional params and collect values
-        // Due to turso's typed params, we'll use a simpler approach with string formatting
-        // for the dynamic WHERE clause, but still use params for the actual values
 
         let chat_filter = p.chat_id.map(|_| {
             let cond = format!("m.chat_id = ?{}", param_idx);
@@ -801,8 +743,7 @@ impl Store {
             limit_param_idx
         );
 
-        // Build params tuple dynamically - we need to handle this carefully
-        // Using a Vec<turso::Value> approach
+        // Build params tuple dynamically
         use turso::Value;
         let mut params: Vec<Value> = Vec::new();
 
@@ -820,10 +761,7 @@ impl Store {
         }
         params.push(Value::Integer(p.limit));
 
-        let mut rows = self
-            .conn
-            .query(&sql, turso::params_from_iter(params))
-            .await?;
+        let mut rows = conn.query(&sql, turso::params_from_iter(params)).await?;
 
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -889,10 +827,8 @@ impl Store {
         );
         params.push(Value::Integer(p.limit));
 
-        let mut rows = self
-            .conn
-            .query(&sql, turso::params_from_iter(params))
-            .await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query(&sql, turso::params_from_iter(params)).await?;
 
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -950,10 +886,8 @@ impl Store {
         );
         params.push(Value::Integer(p.limit));
 
-        let mut rows = self
-            .conn
-            .query(&sql, turso::params_from_iter(params))
-            .await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query(&sql, turso::params_from_iter(params)).await?;
 
         let mut msgs = Vec::new();
         while let Some(row) = rows.next().await? {
@@ -970,60 +904,70 @@ impl Store {
         after: i64,
     ) -> Result<Vec<Message>> {
         // Get the target message timestamp
-        let mut ts_rows = self
-            .conn
-            .query(
-                "SELECT ts FROM messages WHERE chat_id = ?1 AND id = ?2",
-                (chat_id, msg_id),
-            )
-            .await?;
-        let ts: String = match ts_rows.next().await? {
-            Some(row) => row.get(0)?,
-            None => anyhow::bail!("Message {}/{} not found", chat_id, msg_id),
+        let ts: String = {
+            let conn = self.get_conn().await?;
+            let mut rows = conn
+                .query(
+                    "SELECT ts FROM messages WHERE chat_id = ?1 AND id = ?2",
+                    (chat_id, msg_id),
+                )
+                .await?;
+            match rows.next().await? {
+                Some(row) => row.get(0)?,
+                None => anyhow::bail!("Message {}/{} not found", chat_id, msg_id),
+            }
         };
 
         // Messages before
-        let mut before_rows = self
-            .conn
-            .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
-                 FROM messages WHERE chat_id = ?1 AND ts < ?2 ORDER BY ts DESC LIMIT ?3",
-                (chat_id, ts.as_str(), before),
-            )
-            .await?;
-        let mut before_msgs = Vec::new();
-        while let Some(row) = before_rows.next().await? {
-            before_msgs.push(row_to_message(&row)?);
-        }
-        before_msgs.reverse();
+        let before_msgs = {
+            let conn = self.get_conn().await?;
+            let mut before_rows = conn
+                .query(
+                    "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
+                     FROM messages WHERE chat_id = ?1 AND ts < ?2 ORDER BY ts DESC LIMIT ?3",
+                    (chat_id, ts.as_str(), before),
+                )
+                .await?;
+            let mut before_msgs = Vec::new();
+            while let Some(row) = before_rows.next().await? {
+                before_msgs.push(row_to_message(&row)?);
+            }
+            before_msgs.reverse();
+            before_msgs
+        };
 
         // The target message
-        let mut target_rows = self
-            .conn
-            .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
-                 FROM messages WHERE chat_id = ?1 AND id = ?2",
-                (chat_id, msg_id),
-            )
-            .await?;
-        let target = match target_rows.next().await? {
-            Some(row) => row_to_message(&row)?,
-            None => anyhow::bail!("Message not found"),
+        let target = {
+            let conn = self.get_conn().await?;
+            let mut target_rows = conn
+                .query(
+                    "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
+                     FROM messages WHERE chat_id = ?1 AND id = ?2",
+                    (chat_id, msg_id),
+                )
+                .await?;
+            match target_rows.next().await? {
+                Some(row) => row_to_message(&row)?,
+                None => anyhow::bail!("Message not found"),
+            }
         };
 
         // Messages after
-        let mut after_rows = self
-            .conn
-            .query(
-                "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
-                 FROM messages WHERE chat_id = ?1 AND ts > ?2 ORDER BY ts ASC LIMIT ?3",
-                (chat_id, ts.as_str(), after),
-            )
-            .await?;
-        let mut after_msgs = Vec::new();
-        while let Some(row) = after_rows.next().await? {
-            after_msgs.push(row_to_message(&row)?);
-        }
+        let after_msgs = {
+            let conn = self.get_conn().await?;
+            let mut after_rows = conn
+                .query(
+                    "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
+                     FROM messages WHERE chat_id = ?1 AND ts > ?2 ORDER BY ts ASC LIMIT ?3",
+                    (chat_id, ts.as_str(), after),
+                )
+                .await?;
+            let mut after_msgs = Vec::new();
+            while let Some(row) = after_rows.next().await? {
+                after_msgs.push(row_to_message(&row)?);
+            }
+            after_msgs
+        };
 
         let mut result = before_msgs;
         result.push(target);
@@ -1039,18 +983,18 @@ impl Store {
         new_text: &str,
     ) -> Result<()> {
         let edit_ts = Utc::now().to_rfc3339();
-        self.conn
-            .execute(
-                "UPDATE messages SET text = ?1, edit_ts = ?2 WHERE chat_id = ?3 AND id = ?4",
-                (new_text, edit_ts.as_str(), chat_id, msg_id),
-            )
-            .await?;
+        let conn = self.get_conn().await?;
+        conn.execute(
+            "UPDATE messages SET text = ?1, edit_ts = ?2 WHERE chat_id = ?3 AND id = ?4",
+            (new_text, edit_ts.as_str(), chat_id, msg_id),
+        )
+        .await?;
         Ok(())
     }
 
     pub async fn get_message(&self, chat_id: i64, msg_id: i64) -> Result<Option<Message>> {
-        let mut rows = self
-            .conn
+        let conn = self.get_conn().await?;
+        let mut rows = conn
             .query(
                 "SELECT id, chat_id, sender_id, ts, edit_ts, from_me, text, media_type, media_path, reply_to_id, topic_id
                  FROM messages WHERE chat_id = ?1 AND id = ?2",
@@ -1067,7 +1011,8 @@ impl Store {
     // --- Count methods (for clear command) ---
 
     pub async fn count_messages(&self) -> Result<u64> {
-        let mut rows = self.conn.query("SELECT COUNT(*) FROM messages", ()).await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query("SELECT COUNT(*) FROM messages", ()).await?;
         if let Some(row) = rows.next().await? {
             Ok(row.get::<i64>(0)? as u64)
         } else {
@@ -1076,7 +1021,8 @@ impl Store {
     }
 
     pub async fn count_chats(&self) -> Result<u64> {
-        let mut rows = self.conn.query("SELECT COUNT(*) FROM chats", ()).await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query("SELECT COUNT(*) FROM chats", ()).await?;
         if let Some(row) = rows.next().await? {
             Ok(row.get::<i64>(0)? as u64)
         } else {
@@ -1085,7 +1031,8 @@ impl Store {
     }
 
     pub async fn count_topics(&self) -> Result<u64> {
-        let mut rows = self.conn.query("SELECT COUNT(*) FROM topics", ()).await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query("SELECT COUNT(*) FROM topics", ()).await?;
         if let Some(row) = rows.next().await? {
             Ok(row.get::<i64>(0)? as u64)
         } else {
@@ -1094,7 +1041,8 @@ impl Store {
     }
 
     pub async fn count_contacts(&self) -> Result<u64> {
-        let mut rows = self.conn.query("SELECT COUNT(*) FROM contacts", ()).await?;
+        let conn = self.get_conn().await?;
+        let mut rows = conn.query("SELECT COUNT(*) FROM contacts", ()).await?;
         if let Some(row) = rows.next().await? {
             Ok(row.get::<i64>(0)? as u64)
         } else {
@@ -1105,44 +1053,45 @@ impl Store {
     // --- Clear methods (for clear command) ---
 
     pub async fn clear_messages(&self) -> Result<u64> {
-        // Also clear FTS table if it exists
-        let _ = self.conn.execute("DELETE FROM messages_fts", ()).await;
-        let affected = self.conn.execute("DELETE FROM messages", ()).await?;
+        let conn = self.get_conn().await?;
+        let _ = conn.execute("DELETE FROM messages_fts", ()).await;
+        let affected = conn.execute("DELETE FROM messages", ()).await?;
         Ok(affected)
     }
 
     pub async fn clear_chats(&self) -> Result<u64> {
-        let affected = self.conn.execute("DELETE FROM chats", ()).await?;
+        let conn = self.get_conn().await?;
+        let affected = conn.execute("DELETE FROM chats", ()).await?;
         Ok(affected)
     }
 
     pub async fn clear_topics(&self) -> Result<u64> {
-        let affected = self.conn.execute("DELETE FROM topics", ()).await?;
+        let conn = self.get_conn().await?;
+        let affected = conn.execute("DELETE FROM topics", ()).await?;
         Ok(affected)
     }
 
     pub async fn clear_contacts(&self) -> Result<u64> {
-        let affected = self.conn.execute("DELETE FROM contacts", ()).await?;
+        let conn = self.get_conn().await?;
+        let affected = conn.execute("DELETE FROM contacts", ()).await?;
         Ok(affected)
     }
 
     /// Get the oldest message ID for a chat (lowest message ID).
-    /// Returns None if no messages exist for the chat.
     pub async fn get_oldest_message_id(
         &self,
         chat_id: i64,
         topic_id: Option<i32>,
     ) -> Result<Option<i64>> {
+        let conn = self.get_conn().await?;
         let mut rows = if let Some(tid) = topic_id {
-            self.conn
-                .query(
-                    "SELECT MIN(id) FROM messages WHERE chat_id = ?1 AND topic_id = ?2",
-                    (chat_id, tid),
-                )
-                .await?
+            conn.query(
+                "SELECT MIN(id) FROM messages WHERE chat_id = ?1 AND topic_id = ?2",
+                (chat_id, tid),
+            )
+            .await?
         } else {
-            self.conn
-                .query("SELECT MIN(id) FROM messages WHERE chat_id = ?1", [chat_id])
+            conn.query("SELECT MIN(id) FROM messages WHERE chat_id = ?1", [chat_id])
                 .await?
         };
         if let Some(row) = rows.next().await? {
@@ -1153,29 +1102,27 @@ impl Store {
     }
 
     /// Prune old messages for a chat, keeping only the N most recent messages.
-    /// Returns the count of deleted messages.
     pub async fn prune_messages(&self, chat_id: i64, keep_count: usize) -> Result<u64> {
-        // Find the message ID threshold: get the Nth most recent message ID
-        // Messages with id < threshold will be deleted
-        let mut rows = self
-            .conn
-            .query(
-                "SELECT id FROM messages WHERE chat_id = ?1 ORDER BY id DESC LIMIT 1 OFFSET ?2",
-                (chat_id, keep_count as i64),
-            )
-            .await?;
-
-        let threshold_id: Option<i64> = if let Some(row) = rows.next().await? {
-            Some(row.get(0)?)
-        } else {
-            // Fewer than keep_count messages, nothing to prune
-            return Ok(0);
+        // Find the message ID threshold
+        let threshold_id: Option<i64> = {
+            let conn = self.get_conn().await?;
+            let mut rows = conn
+                .query(
+                    "SELECT id FROM messages WHERE chat_id = ?1 ORDER BY id DESC LIMIT 1 OFFSET ?2",
+                    (chat_id, keep_count as i64),
+                )
+                .await?;
+            if let Some(row) = rows.next().await? {
+                Some(row.get(0)?)
+            } else {
+                None
+            }
         };
 
         if let Some(threshold) = threshold_id {
             // Delete messages older than the threshold
-            let deleted = self
-                .conn
+            let conn = self.get_conn().await?;
+            let deleted = conn
                 .execute(
                     "DELETE FROM messages WHERE chat_id = ?1 AND id <= ?2",
                     (chat_id, threshold),
@@ -1188,17 +1135,17 @@ impl Store {
     }
 
     /// Prune messages across all chats, keeping only N most recent per chat.
-    /// Returns total count of deleted messages.
     pub async fn prune_all_chats(&self, keep_count: usize) -> Result<u64> {
         // Get all chat IDs that have messages
-        let mut rows = self
-            .conn
-            .query("SELECT DISTINCT chat_id FROM messages", ())
-            .await?;
-        let mut chat_ids = Vec::new();
-        while let Some(row) = rows.next().await? {
-            chat_ids.push(row.get::<i64>(0)?);
-        }
+        let chat_ids: Vec<i64> = {
+            let conn = self.get_conn().await?;
+            let mut rows = conn.query("SELECT DISTINCT chat_id FROM messages", ()).await?;
+            let mut ids = Vec::new();
+            while let Some(row) = rows.next().await? {
+                ids.push(row.get::<i64>(0)?);
+            }
+            ids
+        };
 
         let mut total_deleted = 0u64;
         for chat_id in chat_ids {
