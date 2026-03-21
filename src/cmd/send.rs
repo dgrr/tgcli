@@ -6,6 +6,14 @@ use chrono::{DateTime, Utc};
 use clap::Args;
 use std::path::PathBuf;
 
+#[derive(clap::ValueEnum, Debug, Clone, Default, PartialEq)]
+pub enum ParseMode {
+    #[default]
+    None,
+    Markdown,
+    Html,
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct SendArgs {
     /// Recipient chat ID
@@ -55,6 +63,10 @@ pub struct SendArgs {
     /// Schedule message to be sent in N seconds from now
     #[arg(long, conflicts_with = "schedule")]
     pub schedule_in: Option<i64>,
+
+    /// Message parse mode: none (plain text), markdown, or html
+    #[arg(long, value_enum, default_value = "none")]
+    pub parse_mode: ParseMode,
 }
 
 /// Parse schedule arguments and return the scheduled DateTime if provided
@@ -209,6 +221,12 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         .as_ref()
         .expect("message required when no sticker");
 
+    let parse_mode = match args.parse_mode {
+        ParseMode::Markdown => "markdown",
+        ParseMode::Html => "html",
+        ParseMode::None => "none",
+    };
+
     // Direct connection
     let mut app = App::new(cli).await?;
 
@@ -216,17 +234,17 @@ pub async fn run(cli: &Cli, args: &SendArgs) -> Result<()> {
         if schedule_time.is_some() {
             anyhow::bail!("--schedule/--schedule-in is not supported with --topic yet");
         }
-        app.send_text_to_topic(args.to, topic_id, message).await?
+        app.send_text_to_topic(args.to, topic_id, message, parse_mode).await?
     } else if let Some(reply_to_id) = args.reply_to {
         if schedule_time.is_some() {
             anyhow::bail!("--schedule/--schedule-in is not supported with --reply-to yet");
         }
-        app.send_text_reply(args.to, message, reply_to_id).await?
+        app.send_text_reply(args.to, message, reply_to_id, parse_mode).await?
     } else if let Some(schedule_dt) = schedule_time {
-        app.send_text_scheduled(args.to, message, schedule_dt)
+        app.send_text_scheduled(args.to, message, schedule_dt, parse_mode)
             .await?
     } else {
-        app.send_text(args.to, message).await?
+        app.send_text(args.to, message, parse_mode).await?
     };
 
     if cli.output.is_json() {

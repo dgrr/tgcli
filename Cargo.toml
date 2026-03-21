@@ -16,7 +16,7 @@ name = "tgcli"
 path = "src/main.rs"
 
 [dependencies]
-grammers-client = { version = "0.8", features = ["fs"] }
+grammers-client = { version = "0.8", features = ["fs", "markdown", "html"] }
 grammers-session = "0.8"
 grammers-tl-types = "0.8"
 grammers-mtsender = "0.8"
