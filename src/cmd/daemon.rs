@@ -42,7 +42,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
 #[derive(Args, Debug, Clone)]
 pub struct DaemonArgs {
     /// Don't run background sync (only listen for new updates)
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = true)]  // Changed to true by default to avoid lock conflicts
     pub no_backfill: bool,
 
     /// Download media files for incoming messages

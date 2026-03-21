@@ -111,7 +111,9 @@ impl Store {
 
         // PRAGMAs that set values return the new value, so use query and ignore results
         let _ = conn.query("PRAGMA journal_mode=WAL", ()).await;
-        let _ = conn.query("PRAGMA busy_timeout=5000", ()).await;
+        let _ = conn.query("PRAGMA busy_timeout=5000", ()).await; // 5s timeout
+        let _ = conn.query("PRAGMA synchronous=NORMAL", ()).await; // Faster writes
+        let _ = conn.query("PRAGMA cache_size=-64000", ()).await; // 64MB cache
 
         let mut store = Store {
             db,
