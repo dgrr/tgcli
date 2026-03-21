@@ -89,6 +89,10 @@ pub struct DaemonInstallArgs {
     /// Run with --quiet flag
     #[arg(long, default_value_t = false)]
     pub quiet: bool,
+
+    /// Chat IDs to ignore (can be specified multiple times)
+    #[arg(long = "ignore", value_name = "CHAT_ID")]
+    pub ignore_chat_ids: Vec<i64>,
 }
 
 pub async fn run(cli: &crate::Cli, args: &DaemonServiceArgs) -> Result<()> {
@@ -134,9 +138,21 @@ async fn install_service(_cli: &crate::Cli, args: &DaemonInstallArgs) -> Result<
         cmd_args.push("--quiet".to_string());
     }
 
+    // Add ignore chat IDs
+    for id in &args.ignore_chat_ids {
+        cmd_args.push("--ignore".to_string());
+        cmd_args.push(id.to_string());
+    }
+
     // Create launchd plist
     let domain = generate_service_domain(&store);
 
+    // Determine log path - use ~/.tgcli/logs/ for personal, ~/.tgcli-uae/logs/ for UAE
+    let store_path = shellexpand::tilde(&store).to_string();
+    let log_dir = PathBuf::from(&store_path).join("logs");
+    fs::create_dir_all(&log_dir)?;
+    let log_base = log_dir.join("daemon");
+    
     let plist_content = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -178,7 +194,7 @@ async fn install_service(_cli: &crate::Cli, args: &DaemonInstallArgs) -> Result<
         domain = domain,
         binary = binary_path,
         program_args = cmd_args.iter().map(|arg| format!("        <string>{}</string>", arg)).collect::<Vec<_>>().join("\n"),
-        log_path = format!("/tmp/tgcli_{}", store.replace("~/", "").replace("/", "_"))
+        log_path = log_base.display()
     );
 
     // Determine plist destination
