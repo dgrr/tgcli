@@ -10,18 +10,27 @@ use std::process::Command;
 
 /// Generate a launchd domain name from store path
 fn generate_service_domain(store: &str) -> String {
-    let normalized = store.replace("~/", "").replace("/", "_").replace(".", "_");
+    // Expand ~ to home directory first
+    let expanded = shellexpand::tilde(store).to_string();
     
-    if normalized == "tgcli" || normalized == "_tgcli" {
+    // Extract just the filename (e.g., ~/.tgcli-uae -> tgcli-uae)
+    let filename = PathBuf::from(&expanded)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("tgcli")
+        .to_string();
+    
+    if filename == "tgcli" || filename == ".tgcli" {
         // Default personal account
         "com.tgcli.sync".to_string()
-    } else if normalized.starts_with("_tgcli_") {
+    } else if filename.starts_with(".tgcli-") {
         // Additional accounts like ~/.tgcli-uae -> com.tgcli.sync.uae
-        let suffix = normalized.trim_start_matches("_tgcli_");
+        // Replace all - with . for valid launchd domain
+        let suffix = filename.trim_start_matches(".tgcli-").replace('-', ".");
         format!("com.tgcli.sync.{}", suffix)
     } else {
-        // Fallback for custom paths
-        format!("com.tgcli.{}", normalized)
+        // Fallback for custom paths - replace - and . with _
+        format!("com.tgcli.{}", filename.replace('-', "_").replace('.', "_"))
     }
 }
 
