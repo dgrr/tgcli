@@ -1,21 +1,19 @@
 ---
 name: tgcli
-description: Telegram CLI for syncing, searching, sending messages, and managing chats. Pure Rust implementation with no TDLib dependency. Supports multi-account setups, local FTS5 search, media download, scheduled messages, and real-time daemon mode. Use for interacting with Telegram from the command line or in scripts.
+description: "Telegram CLI for syncing, searching, sending messages, and managing chats. Pure Rust implementation with no TDLib dependency. Supports multi-account setups, local FTS5 search, media download, scheduled messages, and real-time daemon mode. Use for interacting with Telegram from the command line or in scripts."
 ---
 
 # tgcli – Telegram CLI
 
 Pure Rust Telegram client. No TDLib. Fast. Cross-platform.
 
-## Quick Start
+## Setup
 
-```bash
-tgcli auth                     # Authenticate (first time)
-tgcli sync                     # Incremental sync
-tgcli chats list --output markdown      # List chats (markdown recommended)
-tgcli messages list --chat 987654321 --output markdown  # List messages from chat
-tgcli send --to 123456789 --message "Hello there!"  # Send message
-```
+1. Install tgcli (see [GitHub](https://github.com/dgrr/tgcli) or `cargo install tgcli`)
+2. Authenticate: `tgcli auth`
+3. Verify: `tgcli profile show` — confirms session is active
+4. Initial sync: `tgcli sync` — fetches chats and messages
+5. Verify sync: `tgcli chats list --output markdown` — confirms data is available
 
 ## Core Commands
 
@@ -44,7 +42,7 @@ tgcli chats pin 987654321                    # Pin chat
 tgcli chats mute 987654321                   # Mute notifications
 tgcli chats create --group "Project Alpha" --user 111222333  # Create group
 tgcli chats join https://t.me/joinchat/...   # Join via invite link
-tgcli chats leave 987654321                  # Leave chat
+tgcli chats leave 987654321                  # Leave chat (irreversible for private groups)
 ```
 
 ### Messages
@@ -60,6 +58,12 @@ tgcli messages search --global "urgent task"               # Telegram API search
 tgcli messages show --chat 987654321 --message 4567       # Show specific message
 tgcli messages context --chat 987654321 --message 4567    # Show with context
 tgcli messages download --chat 987654321 --message 4567   # Download media
+```
+
+**Destructive:** Verify the target message before deleting — this cannot be undone:
+
+```bash
+tgcli messages show --chat 987654321 --message 4567       # Confirm content first
 tgcli messages delete --chat 987654321 --message 4567     # Delete message
 ```
 
@@ -76,79 +80,31 @@ tgcli send --to 123456789 --message "Meeting tomorrow" --schedule "tomorrow 9am"
 tgcli send --to 123456789 --message "Agreed" --reply-to 5678 # Reply to message
 ```
 
-### Contacts
-
-List and search contacts.
+### Contacts & Users
 
 ```bash
 tgcli contacts list --output markdown   # List contacts (markdown)
 tgcli contacts search "Alice"           # Search by name
+tgcli users show 123456789              # Show user profile
+tgcli users block 123456789             # Block user
+tgcli users unblock 123456789           # Unblock user
 ```
 
-### Users
+### Destructive Operations
 
-Show user info, block/unblock.
+These commands are irreversible or have significant side effects. Always verify the target first.
 
 ```bash
-tgcli users show 123456789      # Show user profile
-tgcli users block 123456789     # Block user
-tgcli users unblock 123456789   # Unblock user
+# Database reset — deletes all synced data (auth is preserved)
+tgcli chats list --output markdown        # Review current data before wiping
+tgcli wipe                                # Reset database (keeps auth)
+
+# Admin moderation — affects real users in the group
+tgcli admin ban --chat 111222333 --user 999888777    # Ban user from group
+tgcli admin kick --chat 111222333 --user 999888777   # Kick user from group
 ```
 
-### Stickers
-
-List, search, and send stickers.
-
-```bash
-tgcli stickers list --output markdown   # List sticker packs (markdown)
-tgcli stickers search "cat"             # Search sticker sets
-tgcli stickers send --to 123456789 --sticker CAT_ABC123  # Send sticker
-```
-
-### Folders
-
-Create and manage chat folders.
-
-```bash
-tgcli folders list --output markdown   # List folders (markdown)
-tgcli folders create "Work Chats"      # Create new folder
-tgcli folders delete 5                 # Delete folder by ID
-```
-
-### Admin (Groups/Channels)
-
-Ban, kick, promote, demote members.
-
-```bash
-tgcli admin ban --chat 111222333 --user 999888777       # Ban user
-tgcli admin kick --chat 111222333 --user 999888777      # Kick user
-tgcli admin unban --chat 111222333 --user 999888777     # Unban user
-tgcli admin promote --chat 111222333 --user 999888777   # Promote to admin
-tgcli admin demote --chat 111222333 --user 999888777    # Demote admin
-```
-
-### Daemon (Real-Time)
-
-Listen for real-time updates from Telegram servers. Optional — use `sync` for most workflows.
-
-```bash
-tgcli daemon                    # Listen for updates
-tgcli daemon --stream           # JSONL output
-tgcli daemon --no-backfill      # Skip background sync
-tgcli daemon --ignore 987654321 # Ignore specific chat
-tgcli daemon --ignore-channels  # Skip all channels
-```
-
-### Other
-
-```bash
-tgcli read --chat 987654321              # Mark chat as read
-tgcli typing --chat 987654321            # Send typing indicator
-tgcli profile show                       # Show your profile
-tgcli profile set --first-name "Alex"    # Update your name
-tgcli completions bash                   # Shell completions
-tgcli wipe                               # Reset database (keeps auth)
-```
+See [REFERENCE.md](REFERENCE.md) for the full admin, stickers, folders, daemon, and utility command reference.
 
 ## Multi-Account
 
@@ -170,12 +126,6 @@ tgcli chats list --output markdown  # Markdown (recommended for LLMs/pipes)
 tgcli chats list --output json      # JSON for parsing
 ```
 
-**Markdown advantages:**
-- Readable structure (headers, bullet points, dividers)
-- Pipe to ripgrep/grep for filtering
-- Feed to LLMs for processing
-- Consistent across commands
-
 ## Storage
 
 Data stored in `--store` directory (default `~/.tgcli/`):
@@ -188,21 +138,14 @@ Data stored in `--store` directory (default `~/.tgcli/`):
 
 ## Tips & Tricks
 
-**Search messages with ripgrep:**
-
 ```bash
+# Search messages with ripgrep
 tgcli messages list --chat 987654321 --output markdown | rg "keyword"
-```
 
-**Export to markdown file:**
-
-```bash
+# Export to markdown file
 tgcli messages list --chat 987654321 --output markdown > exported.md
-```
 
-**Sync multiple accounts in parallel:**
-
-```bash
+# Sync multiple accounts in parallel
 for account in personal work bot; do
   tgcli --store ~/.tgcli-$account sync -q &
 done
