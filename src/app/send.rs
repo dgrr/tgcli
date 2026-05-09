@@ -2332,7 +2332,11 @@ fn get_media_filename(media: &grammers_client::types::Media, msg_id: i64) -> (St
         Media::Document(doc) => {
             // Try to get original filename
             if !doc.name().is_empty() {
-                let name = doc.name();
+                let name = doc
+                    .name()
+                    .rsplit(['/', '\\'])
+                    .find(|part| !part.is_empty() && *part != "." && *part != "..")
+                    .unwrap_or("document");
                 if let Some(pos) = name.rfind('.') {
                     return (name[..pos].to_string(), name[pos + 1..].to_string());
                 }
