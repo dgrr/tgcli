@@ -334,6 +334,26 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                                     messages_stored.fetch_add(1, Ordering::Relaxed);
                                 }
 
+                                // Populate contacts from the sender in real time so
+                                // names resolve. Costs nothing — the sender object
+                                // already arrived with the update.
+                                if let Some(Peer::User(user)) = msg.sender() {
+                                    if let Err(e) = app
+                                        .get_store()
+                                        .await?
+                                        .upsert_contact(
+                                            user.bare_id(),
+                                            user.username(),
+                                            user.first_name().unwrap_or(""),
+                                            user.last_name().unwrap_or(""),
+                                            user.phone().unwrap_or(""),
+                                        )
+                                        .await
+                                    {
+                                        log::warn!("Failed to upsert sender contact: {}", e);
+                                    }
+                                }
+
                                 // Update chat metadata
                                 let chat_name = chat_name_from_peer(&peer);
                                 let username = username_from_peer(&peer);

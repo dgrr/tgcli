@@ -190,6 +190,34 @@ struct FetchedMessage {
     media_path: Option<String>,
     reply_to_id: Option<i64>,
     topic_id: Option<i32>,
+    /// Sender identity captured with the message, so `contacts` can be
+    /// populated at store time without any extra API call. `None` when the
+    /// sender is not a user (e.g. a channel) or is unknown.
+    sender_contact: Option<SenderContact>,
+}
+
+/// A message sender's identity, lifted from the `Peer` that already rides
+/// along with every fetched message. Used to upsert `contacts` for free.
+struct SenderContact {
+    user_id: i64,
+    username: Option<String>,
+    first_name: String,
+    last_name: String,
+    phone: String,
+}
+
+/// Extract a [`SenderContact`] from a message's sender peer, if it is a user.
+fn sender_contact_from_peer(sender: Option<&Peer>) -> Option<SenderContact> {
+    match sender {
+        Some(Peer::User(u)) => Some(SenderContact {
+            user_id: u.bare_id(),
+            username: u.username().map(|s| s.to_string()),
+            first_name: u.first_name().unwrap_or("").to_string(),
+            last_name: u.last_name().unwrap_or("").to_string(),
+            phone: u.phone().unwrap_or("").to_string(),
+        }),
+        _ => None,
+    }
 }
 
 /// Output representation of a synced message (used for Text/Json/Stream modes)
@@ -867,7 +895,10 @@ impl App {
                                     latest_ts = Some(msg_ts);
                                 }
 
-                                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                                let sender = msg.sender();
+                                let sender_id =
+                                    sender.as_ref().map(|s| s.id().bare_id()).unwrap_or(0);
+                                let sender_contact = sender_contact_from_peer(sender);
                                 let from_me = msg.outgoing();
                                 let text = msg.text().to_string();
                                 let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
@@ -904,6 +935,7 @@ impl App {
                                     media_path,
                                     reply_to_id,
                                     topic_id,
+                                    sender_contact,
                                 };
 
                                 // Stream output immediately (before collecting all results)
@@ -1024,6 +1056,21 @@ impl App {
                         topic_id: msg.topic_id,
                     })
                     .await?;
+                // Populate contacts from the sender captured with the message
+                // (no extra API call — it rode along with the message history).
+                if let Some(c) = &msg.sender_contact {
+                    let _ = self
+                        .get_store()
+                        .await?
+                        .upsert_contact(
+                            c.user_id,
+                            c.username.as_deref(),
+                            &c.first_name,
+                            &c.last_name,
+                            &c.phone,
+                        )
+                        .await;
+                }
                 messages_stored += 1;
             }
 
@@ -1322,7 +1369,8 @@ impl App {
                     latest_ts = Some(msg_ts);
                 }
 
-                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let sender = msg.sender();
+                let sender_id = sender.as_ref().map(|s| s.id().bare_id()).unwrap_or(0);
                 let from_me = msg.outgoing();
 
                 let text = msg.text().to_string();
@@ -1364,6 +1412,20 @@ impl App {
                         topic_id,
                     })
                     .await?;
+                // Populate contacts from the message sender (free — no API call).
+                if let Some(c) = sender_contact_from_peer(sender) {
+                    let _ = self
+                        .get_store()
+                        .await?
+                        .upsert_contact(
+                            c.user_id,
+                            c.username.as_deref(),
+                            &c.first_name,
+                            &c.last_name,
+                            &c.phone,
+                        )
+                        .await;
+                }
                 messages_stored += 1;
 
                 // Show progress periodically
@@ -1648,7 +1710,8 @@ impl App {
                         latest_ts = Some(msg_ts);
                     }
 
-                    let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                    let sender = msg.sender();
+                    let sender_id = sender.as_ref().map(|s| s.id().bare_id()).unwrap_or(0);
                     let from_me = msg.outgoing();
 
                     let text = msg.text().to_string();
@@ -1687,6 +1750,20 @@ impl App {
                             topic_id,
                         })
                         .await?;
+                    // Populate contacts from the message sender (free — no API call).
+                    if let Some(c) = sender_contact_from_peer(sender) {
+                        let _ = self
+                            .get_store()
+                            .await?
+                            .upsert_contact(
+                                c.user_id,
+                                c.username.as_deref(),
+                                &c.first_name,
+                                &c.last_name,
+                                &c.phone,
+                            )
+                            .await;
+                    }
                     messages_stored += 1;
 
                     // Show progress periodically
