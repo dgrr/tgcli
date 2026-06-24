@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
 use grammers_client::parsers::{parse_html_message, parse_markdown_message};
-use grammers_client::types::Attribute;
+use grammers_client::types::{Attribute, Message};
 use grammers_client::InputMessage;
 use grammers_session::defs::PeerRef;
 use grammers_tl_types as tl;
@@ -855,7 +855,7 @@ impl App {
 
     /// Resolve a chat ID to a PeerRef we can use for API calls.
     /// Iterates dialogs to find the matching peer.
-    async fn resolve_peer_ref(&self, chat_id: i64) -> Result<PeerRef> {
+    pub(crate) async fn resolve_peer_ref(&self, chat_id: i64) -> Result<PeerRef> {
         let mut dialogs = self.tg.client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
@@ -867,6 +867,26 @@ impl App {
             "Chat {} not found. Run `tgcli sync` to refresh your chat list.",
             chat_id
         );
+    }
+
+    /// Fetch a single message by id straight from Telegram (not the local
+    /// store), so the live `reply_markup`/media is available. Shared by
+    /// `download_media` and the inline-button commands. `None` if not found.
+    pub(crate) async fn fetch_message_by_id(
+        &self,
+        peer_ref: PeerRef,
+        msg_id: i64,
+    ) -> Result<Option<Message>> {
+        let mut it = self
+            .tg
+            .client
+            .iter_messages(peer_ref)
+            .offset_id(msg_id as i32 + 1)
+            .limit(1);
+        match it.next().await? {
+            Some(m) if m.id() == msg_id as i32 => Ok(Some(m)),
+            _ => Ok(None),
+        }
     }
 
     /// Backfill (fetch older) messages for a chat.
@@ -2056,18 +2076,11 @@ impl App {
 
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
 
-        // Fetch the specific message
-        let mut message_iter = self.tg.client.iter_messages(peer_ref);
-        message_iter = message_iter.offset_id(msg_id as i32 + 1).limit(1);
-
-        let msg = message_iter
-            .next()
+        // Fetch the specific message (shared helper, also used by `messages click`).
+        let msg = self
+            .fetch_message_by_id(peer_ref, msg_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Message {} not found in chat {}", msg_id, chat_id))?;
-
-        if msg.id() != msg_id as i32 {
-            anyhow::bail!("Message {} not found in chat {}", msg_id, chat_id);
-        }
 
         let media = msg
             .media()

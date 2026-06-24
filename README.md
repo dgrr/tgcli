@@ -66,6 +66,34 @@ tgcli send --to <chat_id> --message "Hello!"
 tgcli messages download --chat <chat_id> --message <msg_id>
 ```
 
+## Inline Buttons & Bots
+
+Drive bots that reply with inline keyboards (for example search bots that send
+a file when you tap a result). These commands read and press buttons over the
+network, so they work without a prior `sync`.
+
+```bash
+# Show the latest messages straight from Telegram (bypasses the local DB)
+tgcli messages latest --chat <chat_id> --limit 10
+
+# List a message's inline keyboard (index, kind, callback data / url)
+tgcli messages buttons --chat <chat_id> --message <msg_id>
+
+# Press a callback button by index (from `messages buttons`)
+tgcli messages click --chat <chat_id> --message <msg_id> --button <index>
+
+# Press a button, then wait for and download the file the bot sends back
+tgcli messages click --chat <chat_id> --message <msg_id> --button <index> \
+    --download --wait 45 --dest ./downloads
+
+# Press by raw callback data instead of index (URL-safe base64)
+tgcli messages click --chat <chat_id> --message <msg_id> --data <base64>
+```
+
+`click` invokes `messages.getBotCallbackAnswer`. Bots that take a while to
+respond may surface `BOT_RESPONSE_TIMEOUT`; tgcli treats this as delivered and
+still waits for the follow-up message when `--wait`/`--download` is set.
+
 ## Sync Behavior
 
 - **First run**: Fetches all chats + last 50 messages per chat (configurable with `--messages-per-chat`)

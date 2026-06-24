@@ -240,6 +240,48 @@ pub enum MessagesCommand {
         #[arg(long, short)]
         dest: Option<String>,
     },
+    /// List inline keyboard buttons on a message (index, kind, callback data)
+    Buttons {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID
+        #[arg(long = "message")]
+        msg_id: i64,
+    },
+    /// Click an inline keyboard button on a bot message (callback query)
+    Click {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Message ID holding the inline keyboard
+        #[arg(long = "message")]
+        msg_id: i64,
+        /// Button index (0-based, from `messages buttons`)
+        #[arg(long)]
+        button: Option<usize>,
+        /// Raw callback data as URL-safe base64 (alternative to --button)
+        #[arg(long)]
+        data: Option<String>,
+        /// After clicking, wait up to N seconds for the bot's reply
+        #[arg(long)]
+        wait: Option<u64>,
+        /// After clicking, download media from the bot's reply (implies waiting)
+        #[arg(long)]
+        download: bool,
+        /// Destination path/dir for --download
+        #[arg(long, short)]
+        dest: Option<String>,
+    },
+    /// Show latest messages straight from Telegram (live, bypasses local DB)
+    Latest {
+        /// Chat ID
+        #[arg(long)]
+        chat: i64,
+        /// Number of messages to fetch
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
@@ -599,6 +641,107 @@ pub async fn run(cli: &Cli, cmd: &MessagesCommand) -> Result<()> {
             } else {
                 println!("Downloaded {} to {}", result.media_type, result.path);
                 println!("Size: {} bytes", result.size);
+            }
+        }
+        MessagesCommand::Buttons { chat, msg_id } => {
+            let app = App::new(cli).await?;
+            let buttons = app.message_buttons(*chat, *msg_id).await?;
+
+            if cli.output.is_json() {
+                out::write_json(&buttons)?;
+            } else if buttons.is_empty() {
+                println!("No inline buttons on message {} in chat {}", msg_id, chat);
+            } else {
+                println!("{:<4} {:<13} {:<32} DATA / URL", "IDX", "KIND", "TEXT");
+                for b in &buttons {
+                    // For callback buttons show the base64 payload (copy-pasteable
+                    // into `messages click --data`), appending the decoded text
+                    // when printable. URL/webview buttons show their URL.
+                    let extra = match (&b.url, &b.data) {
+                        (Some(u), _) => u.clone(),
+                        (None, Some(d)) => match &b.data_text {
+                            Some(t) => format!("{d}  ({t})"),
+                            None => d.clone(),
+                        },
+                        (None, None) => String::new(),
+                    };
+                    let text: String = b.text.chars().take(30).collect();
+                    println!("{:<4} {:<13} {:<32} {}", b.index, b.kind, text, extra);
+                }
+            }
+        }
+        MessagesCommand::Click {
+            chat,
+            msg_id,
+            button,
+            data,
+            wait,
+            download,
+            dest,
+        } => {
+            let app = App::new(cli).await?;
+            let outcome = app
+                .click_button(
+                    *chat,
+                    *msg_id,
+                    *button,
+                    data.as_deref(),
+                    *wait,
+                    *download,
+                    dest.as_deref(),
+                )
+                .await?;
+
+            if cli.output.is_json() {
+                out::write_json(&outcome)?;
+            } else {
+                println!("Clicked button on message {} in chat {}", msg_id, chat);
+                if let Some(m) = &outcome.message {
+                    println!(
+                        "Bot answer{}: {}",
+                        if outcome.alert { " (alert)" } else { "" },
+                        m
+                    );
+                }
+                if let Some(u) = &outcome.url {
+                    println!("URL: {}", u);
+                }
+                for nm in &outcome.new_messages {
+                    println!(
+                        "New message {}{}: {}",
+                        nm.id,
+                        if nm.has_media { " [media]" } else { "" },
+                        nm.text
+                    );
+                }
+                for p in &outcome.downloaded {
+                    println!("Downloaded: {}", p);
+                }
+                if outcome.new_messages.is_empty() && (*download || wait.is_some()) {
+                    println!("(no new message arrived within the wait window)");
+                }
+            }
+        }
+        MessagesCommand::Latest { chat, limit } => {
+            let app = App::new(cli).await?;
+            let msgs = app.latest_messages(*chat, *limit).await?;
+
+            if cli.output.is_json() {
+                out::write_json(&msgs)?;
+            } else if msgs.is_empty() {
+                println!("No messages in chat {}", chat);
+            } else {
+                println!("{:<10} {:<4} {:<5} TEXT", "ID", "BTN", "MEDIA");
+                for m in &msgs {
+                    let t: String = m.text.replace('\n', " ");
+                    println!(
+                        "{:<10} {:<4} {:<5} {}",
+                        m.id,
+                        if m.buttons { "yes" } else { "-" },
+                        if m.media { "yes" } else { "-" },
+                        t
+                    );
+                }
             }
         }
     }

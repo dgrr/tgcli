@@ -1,3 +1,4 @@
+pub mod buttons;
 pub mod send;
 pub mod sync;
 
