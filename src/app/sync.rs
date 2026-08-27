@@ -1,13 +1,16 @@
 use crate::app::App;
 use crate::shutdown;
 use crate::store::UpsertMessageParams;
+use crate::tg::peer_to_ref_async;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
-use grammers_client::types::{Media, Message as TgMessage, Peer};
+use grammers_client::media::Media;
+use grammers_client::message::Message as TgMessage;
+use grammers_client::peer::Peer;
 use grammers_client::Client;
-use grammers_session::defs::{PeerAuth, PeerId, PeerRef};
 use grammers_session::storages::SqliteSession;
+use grammers_session::types::{PeerAuth, PeerId, PeerRef};
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use std::collections::HashSet;
@@ -66,14 +69,11 @@ fn media_info(media: &Media) -> (String, String) {
             };
 
             // Try to get extension from filename first
-            let ext = if let Some(name) = Some(doc.name()).filter(|n| !n.is_empty()) {
-                Path::new(name)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|s| s.to_lowercase())
-            } else {
-                None
-            };
+            let ext = doc
+                .name()
+                .filter(|n| !n.is_empty())
+                .and_then(|name| Path::new(name).extension().and_then(|e| e.to_str()))
+                .map(|s| s.to_lowercase());
 
             // Fall back to mime type
             let ext = ext.unwrap_or_else(|| {
@@ -268,97 +268,13 @@ impl App {
     /// Try to resolve a chat ID to a PeerRef from the session cache (no API calls).
     /// If the peer is not in the session cache but we have a stored access_hash, use that.
     /// Returns None if the chat is not cached and we have no stored access_hash.
-    fn resolve_peer_from_session(
+    async fn resolve_peer_from_session(
         &self,
         chat_id: i64,
         kind: &str,
         stored_access_hash: Option<i64>,
     ) -> Option<PeerRef> {
-        // Try based on the known type first
-        match kind {
-            "channel" | "group" => {
-                // Channels and megagroups use channel peer IDs
-                let channel_peer_id = PeerId::channel(chat_id);
-                if let Some(info) = self.tg.session.peer(channel_peer_id) {
-                    return Some(PeerRef {
-                        id: channel_peer_id,
-                        auth: info.auth(),
-                    });
-                }
-                // Fallback to stored access_hash if available
-                if let Some(hash) = stored_access_hash {
-                    return Some(PeerRef {
-                        id: channel_peer_id,
-                        auth: PeerAuth::from_hash(hash),
-                    });
-                }
-            }
-            "user" => {
-                let user_peer_id = PeerId::user(chat_id);
-                if let Some(info) = self.tg.session.peer(user_peer_id) {
-                    return Some(PeerRef {
-                        id: user_peer_id,
-                        auth: info.auth(),
-                    });
-                }
-                // Fallback to stored access_hash if available
-                if let Some(hash) = stored_access_hash {
-                    return Some(PeerRef {
-                        id: user_peer_id,
-                        auth: PeerAuth::from_hash(hash),
-                    });
-                }
-            }
-            _ => {}
-        }
-
-        // Fallback: try all peer types from session cache
-        // Try as channel first (most common for groups)
-        let channel_peer_id = PeerId::channel(chat_id);
-        if let Some(info) = self.tg.session.peer(channel_peer_id) {
-            return Some(PeerRef {
-                id: channel_peer_id,
-                auth: info.auth(),
-            });
-        }
-
-        // Try as user
-        let user_peer_id = PeerId::user(chat_id);
-        if let Some(info) = self.tg.session.peer(user_peer_id) {
-            return Some(PeerRef {
-                id: user_peer_id,
-                auth: info.auth(),
-            });
-        }
-
-        // Try as small group chat (basic groups have different IDs)
-        if chat_id > 0 && chat_id <= 999999999999 {
-            let chat_peer_id = PeerId::chat(chat_id);
-            if let Some(info) = self.tg.session.peer(chat_peer_id) {
-                return Some(PeerRef {
-                    id: chat_peer_id,
-                    auth: info.auth(),
-                });
-            }
-            // Small group chats don't need access_hash, so try with default auth
-            if stored_access_hash.is_some() {
-                return Some(PeerRef {
-                    id: chat_peer_id,
-                    auth: PeerAuth::default(),
-                });
-            }
-        }
-
-        // Last resort: try to construct from stored access_hash with best-guess peer type
-        if let Some(hash) = stored_access_hash {
-            // Most likely a channel/group if we have an access_hash
-            return Some(PeerRef {
-                id: channel_peer_id,
-                auth: PeerAuth::from_hash(hash),
-            });
-        }
-
-        None
+        resolve_peer_from_session_static(&self.tg.session, chat_id, kind, stored_access_hash).await
     }
 
     /// Download media from a message if present and return (media_type, media_path)
@@ -473,7 +389,9 @@ impl App {
             }
             let peer = dialog.peer();
             let (kind, name, username, is_forum, access_hash) = peer_info(peer);
-            let id = peer.id().bare_id();
+            let Some(id) = peer.id().bare_id() else {
+                continue;
+            };
 
             if should_ignore(id, &kind) {
                 continue;
@@ -499,7 +417,7 @@ impl App {
                 self.get_store()
                     .await?
                     .upsert_contact(
-                        user.bare_id(),
+                        id,
                         user.username(),
                         user.first_name().unwrap_or(""),
                         user.last_name().unwrap_or(""),
@@ -546,7 +464,9 @@ impl App {
                     break;
                 }
                 let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
-                let id = peer.id().bare_id();
+                let Some(id) = peer.id().bare_id() else {
+                    continue;
+                };
 
                 if should_ignore(id, &kind) {
                     continue;
@@ -572,7 +492,7 @@ impl App {
                     self.get_store()
                         .await?
                         .upsert_contact(
-                            user.bare_id(),
+                            id,
                             user.username(),
                             user.first_name().unwrap_or(""),
                             user.last_name().unwrap_or(""),
@@ -622,37 +542,40 @@ impl App {
         // Get all chats that have sync checkpoints
         let all_chats = self.get_store().await?.list_chats_with_checkpoint().await?;
 
-        // Filter chats to process
+        // Filter chats to process (async: peer resolution queries the session)
         let chat_filter = opts.chat_filter;
         let skip_archived = opts.skip_archived;
         let archived_only = opts.archived_only;
-        let chats_to_sync: Vec<_> = all_chats
-            .into_iter()
-            .filter(|chat| {
-                // If chat_filter is set, only include that specific chat
-                if let Some(filter_id) = chat_filter {
-                    if chat.id != filter_id {
-                        return false;
-                    }
+        let mut chats_to_sync: Vec<_> = Vec::new();
+        for chat in all_chats {
+            // If chat_filter is set, only include that specific chat
+            if let Some(filter_id) = chat_filter {
+                if chat.id != filter_id {
+                    continue;
                 }
-                if ignore_set.contains(&chat.id) {
-                    return false;
-                }
-                if ignore_channels && chat.kind == "channel" {
-                    return false;
-                }
-                // Filter by archived status
-                if skip_archived && chat.archived {
-                    return false;
-                }
-                if archived_only && !chat.archived {
-                    return false;
-                }
-                // Must have peer info to sync
-                self.resolve_peer_from_session(chat.id, &chat.kind, chat.access_hash)
-                    .is_some()
-            })
-            .collect();
+            }
+            if ignore_set.contains(&chat.id) {
+                continue;
+            }
+            if ignore_channels && chat.kind == "channel" {
+                continue;
+            }
+            // Filter by archived status
+            if skip_archived && chat.archived {
+                continue;
+            }
+            if archived_only && !chat.archived {
+                continue;
+            }
+            // Must have peer info to sync. Keep the resolved ref: the session
+            // lookup is a database query, so re-resolving per task would double it.
+            if let Some(peer_ref) = self
+                .resolve_peer_from_session(chat.id, &chat.kind, chat.access_hash)
+                .await
+            {
+                chats_to_sync.push((chat, peer_ref));
+            }
+        }
 
         let total_chats = chats_to_sync.len();
         if total_chats == 0 {
@@ -667,7 +590,7 @@ impl App {
         }
 
         // Fetch unread counts from dialogs for the chats we're about to sync
-        let chat_ids_to_sync: HashSet<i64> = chats_to_sync.iter().map(|c| c.id).collect();
+        let chat_ids_to_sync: HashSet<i64> = chats_to_sync.iter().map(|(c, _)| c.id).collect();
         let mut unread_counts: std::collections::HashMap<i64, i32> =
             std::collections::HashMap::new();
 
@@ -678,7 +601,9 @@ impl App {
         let client = &self.tg.client;
         let mut dialogs = client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await.ok().flatten() {
-            let chat_id = dialog.peer().id().bare_id();
+            let Some(chat_id) = dialog.peer().id().bare_id() else {
+                continue;
+            };
             if chat_ids_to_sync.contains(&chat_id) {
                 let unread = extract_unread_count(&dialog.raw);
                 unread_counts.insert(chat_id, unread);
@@ -704,9 +629,6 @@ impl App {
 
         // Clone client for use in tasks (grammers Client is Clone)
         let client = self.tg.client.clone();
-
-        // Session for peer resolution
-        let session = self.tg.session.clone();
 
         // Store dir for media paths (if download enabled later)
         let store_dir = self.store_dir.clone();
@@ -752,10 +674,9 @@ impl App {
 
         // Create concurrent stream of chat sync tasks
         let results: Vec<ChatSyncTaskResult> = stream::iter(chats_to_sync)
-            .map(|chat| {
+            .map(|(chat, peer_ref)| {
                 let sem = semaphore.clone();
                 let client = client.clone();
-                let session = session.clone();
                 let store_dir = store_dir.clone();
                 let chats_done = chats_done.clone();
                 let messages_fetched = messages_fetched.clone();
@@ -784,35 +705,6 @@ impl App {
                             error: None,
                         };
                     }
-
-                    // Resolve peer
-                    let peer_ref = resolve_peer_from_session_static(
-                        &session,
-                        chat.id,
-                        &chat.kind,
-                        chat.access_hash,
-                    );
-
-                    let peer_ref = match peer_ref {
-                        Some(p) => p,
-                        None => {
-                            chats_done.fetch_add(1, Ordering::Relaxed);
-                            return ChatSyncTaskResult {
-                                chat_id: chat.id,
-                                chat_name: chat.name.clone(),
-                                chat_kind: chat.kind.clone(),
-                                chat_username: chat.username.clone(),
-                                is_forum: chat.is_forum,
-                                access_hash: chat.access_hash,
-                                archived: chat.archived,
-                                messages: Vec::new(),
-                                highest_msg_id: None,
-                                latest_ts: None,
-                                topic_counts: std::collections::HashMap::new(),
-                                error: Some("No peer ref available".to_string()),
-                            };
-                        }
-                    };
 
                     // Fetch messages
                     // For incremental sync, use the stored checkpoint; for full sync, fetch all
@@ -867,7 +759,8 @@ impl App {
                                     latest_ts = Some(msg_ts);
                                 }
 
-                                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                                let sender_id =
+                                    msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
                                 let from_me = msg.outgoing();
                                 let text = msg.text().to_string();
                                 let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
@@ -1146,7 +1039,7 @@ impl App {
             .map(|mut summary| {
                 summary
                     .topics
-                    .sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
+                    .sort_by_key(|a| std::cmp::Reverse(a.messages_synced));
                 summary
             })
             .collect();
@@ -1214,7 +1107,9 @@ impl App {
             }
             let peer = dialog.peer();
             let (kind, name, username, is_forum, access_hash) = peer_info(peer);
-            let id = peer.id().bare_id();
+            let Some(id) = peer.id().bare_id() else {
+                continue;
+            };
 
             // Skip ignored chats.
             if should_ignore(id, &kind) {
@@ -1241,7 +1136,7 @@ impl App {
                 self.get_store()
                     .await?
                     .upsert_contact(
-                        user.bare_id(),
+                        id,
                         user.username(),
                         user.first_name().unwrap_or(""),
                         user.last_name().unwrap_or(""),
@@ -1254,7 +1149,7 @@ impl App {
             let unread_count = extract_unread_count(&dialog.raw);
 
             // Fetch messages for this chat
-            let peer_ref = PeerRef::from(peer);
+            let peer_ref = peer_to_ref_async(peer).await?;
             let mut message_iter = client.iter_messages(peer_ref);
             let mut count = 0;
             let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -1322,7 +1217,7 @@ impl App {
                     latest_ts = Some(msg_ts);
                 }
 
-                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let sender_id = msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
                 let from_me = msg.outgoing();
 
                 let text = msg.text().to_string();
@@ -1542,7 +1437,9 @@ impl App {
                 }
 
                 let (kind, name, username, is_forum, access_hash) = peer_info(&peer);
-                let id = peer.id().bare_id();
+                let Some(id) = peer.id().bare_id() else {
+                    continue;
+                };
 
                 // Skip ignored chats.
                 if should_ignore(id, &kind) {
@@ -1569,7 +1466,7 @@ impl App {
                     self.get_store()
                         .await?
                         .upsert_contact(
-                            user.bare_id(),
+                            id,
                             user.username(),
                             user.first_name().unwrap_or(""),
                             user.last_name().unwrap_or(""),
@@ -1579,7 +1476,7 @@ impl App {
                 }
 
                 // Fetch messages for this chat
-                let peer_ref = PeerRef::from(&peer);
+                let peer_ref = peer_to_ref_async(&peer).await?;
                 let mut message_iter = client.iter_messages(peer_ref);
                 let mut count = 0;
                 let mut latest_ts: Option<DateTime<Utc>> = None;
@@ -1648,7 +1545,7 @@ impl App {
                         latest_ts = Some(msg_ts);
                     }
 
-                    let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                    let sender_id = msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
                     let from_me = msg.outgoing();
 
                     let text = msg.text().to_string();
@@ -1843,7 +1740,7 @@ impl App {
             .map(|mut summary| {
                 summary
                     .topics
-                    .sort_by(|a, b| b.messages_synced.cmp(&a.messages_synced));
+                    .sort_by_key(|a| std::cmp::Reverse(a.messages_synced));
                 summary
             })
             .collect();
@@ -1955,7 +1852,10 @@ impl App {
                         last_peer_id = Some(u.user_id);
                         last_peer_kind = Some("user");
                         if let Some(user) = users_map.get(&u.user_id) {
-                            Peer::User(grammers_client::types::User::from_raw(user.clone()))
+                            Peer::User(grammers_client::peer::User::from_raw(
+                                &self.tg.client,
+                                user.clone(),
+                            ))
                         } else {
                             continue;
                         }
@@ -1964,7 +1864,10 @@ impl App {
                         last_peer_id = Some(c.chat_id);
                         last_peer_kind = Some("chat");
                         if let Some(chat) = chats_map.get(&c.chat_id) {
-                            Peer::Group(grammers_client::types::Group::from_raw(chat.clone()))
+                            Peer::Group(grammers_client::peer::Group::from_raw(
+                                &self.tg.client,
+                                chat.clone(),
+                            ))
                         } else {
                             continue;
                         }
@@ -1974,12 +1877,16 @@ impl App {
                         last_peer_kind = Some("channel");
                         if let Some(chat) = chats_map.get(&c.channel_id) {
                             match chat {
-                                tl::enums::Chat::Channel(ch) if ch.broadcast => Peer::Channel(
-                                    grammers_client::types::Channel::from_raw(chat.clone()),
-                                ),
+                                tl::enums::Chat::Channel(ch) if ch.broadcast => {
+                                    Peer::Channel(grammers_client::peer::Channel::from_raw(
+                                        &self.tg.client,
+                                        chat.clone(),
+                                    ))
+                                }
                                 tl::enums::Chat::Channel(_) => {
                                     // Megagroup (supergroup) - treat as Group
-                                    Peer::Group(grammers_client::types::Group::from_raw(
+                                    Peer::Group(grammers_client::peer::Group::from_raw(
+                                        &self.tg.client,
                                         chat.clone(),
                                     ))
                                 }
@@ -2025,8 +1932,23 @@ impl App {
     }
 }
 
+/// Look up a peer in the session cache, returning a PeerRef if found.
+///
+/// `Session::peer_ref` yields `None` both when the peer is absent and when it is
+/// cached without usable auth, so callers keep walking their fallback chain
+/// instead of building a `PeerRef` with a zeroed access_hash.
+async fn lookup_peer_in_session(session: &SqliteSession, peer_id: PeerId) -> Option<PeerRef> {
+    match session.peer_ref(peer_id).await {
+        Ok(peer_ref) => peer_ref,
+        Err(e) => {
+            log::warn!("Session lookup failed for peer {:?}: {}", peer_id, e);
+            None
+        }
+    }
+}
+
 /// Static version of resolve_peer_from_session for use in async tasks
-fn resolve_peer_from_session_static(
+async fn resolve_peer_from_session_static(
     session: &SqliteSession,
     chat_id: i64,
     kind: &str,
@@ -2035,33 +1957,29 @@ fn resolve_peer_from_session_static(
     // Try based on the known type first
     match kind {
         "channel" | "group" => {
-            let channel_peer_id = PeerId::channel(chat_id);
-            if let Some(info) = session.peer(channel_peer_id) {
-                return Some(PeerRef {
-                    id: channel_peer_id,
-                    auth: info.auth(),
-                });
-            }
-            if let Some(hash) = stored_access_hash {
-                return Some(PeerRef {
-                    id: channel_peer_id,
-                    auth: PeerAuth::from_hash(hash),
-                });
+            if let Some(channel_peer_id) = PeerId::channel(chat_id) {
+                if let Some(peer_ref) = lookup_peer_in_session(session, channel_peer_id).await {
+                    return Some(peer_ref);
+                }
+                if let Some(hash) = stored_access_hash {
+                    return Some(PeerRef {
+                        id: channel_peer_id,
+                        auth: PeerAuth::from_hash(hash),
+                    });
+                }
             }
         }
         "user" => {
-            let user_peer_id = PeerId::user(chat_id);
-            if let Some(info) = session.peer(user_peer_id) {
-                return Some(PeerRef {
-                    id: user_peer_id,
-                    auth: info.auth(),
-                });
-            }
-            if let Some(hash) = stored_access_hash {
-                return Some(PeerRef {
-                    id: user_peer_id,
-                    auth: PeerAuth::from_hash(hash),
-                });
+            if let Some(user_peer_id) = PeerId::user(chat_id) {
+                if let Some(peer_ref) = lookup_peer_in_session(session, user_peer_id).await {
+                    return Some(peer_ref);
+                }
+                if let Some(hash) = stored_access_hash {
+                    return Some(PeerRef {
+                        id: user_peer_id,
+                        auth: PeerAuth::from_hash(hash),
+                    });
+                }
             }
         }
         _ => {}
@@ -2069,42 +1987,40 @@ fn resolve_peer_from_session_static(
 
     // Fallback: try all peer types from session cache
     let channel_peer_id = PeerId::channel(chat_id);
-    if let Some(info) = session.peer(channel_peer_id) {
-        return Some(PeerRef {
-            id: channel_peer_id,
-            auth: info.auth(),
-        });
+    if let Some(peer_id) = channel_peer_id {
+        if let Some(peer_ref) = lookup_peer_in_session(session, peer_id).await {
+            return Some(peer_ref);
+        }
     }
 
     let user_peer_id = PeerId::user(chat_id);
-    if let Some(info) = session.peer(user_peer_id) {
-        return Some(PeerRef {
-            id: user_peer_id,
-            auth: info.auth(),
-        });
+    if let Some(peer_id) = user_peer_id {
+        if let Some(peer_ref) = lookup_peer_in_session(session, peer_id).await {
+            return Some(peer_ref);
+        }
     }
 
     if chat_id > 0 && chat_id <= 999999999999 {
-        let chat_peer_id = PeerId::chat(chat_id);
-        if let Some(info) = session.peer(chat_peer_id) {
-            return Some(PeerRef {
-                id: chat_peer_id,
-                auth: info.auth(),
-            });
-        }
-        if stored_access_hash.is_some() {
-            return Some(PeerRef {
-                id: chat_peer_id,
-                auth: PeerAuth::default(),
-            });
+        if let Some(chat_peer_id) = PeerId::chat(chat_id) {
+            if let Some(peer_ref) = lookup_peer_in_session(session, chat_peer_id).await {
+                return Some(peer_ref);
+            }
+            if stored_access_hash.is_some() {
+                return Some(PeerRef {
+                    id: chat_peer_id,
+                    auth: PeerAuth::default(),
+                });
+            }
         }
     }
 
     if let Some(hash) = stored_access_hash {
-        return Some(PeerRef {
-            id: channel_peer_id,
-            auth: PeerAuth::from_hash(hash),
-        });
+        if let Some(channel_peer_id) = channel_peer_id {
+            return Some(PeerRef {
+                id: channel_peer_id,
+                auth: PeerAuth::from_hash(hash),
+            });
+        }
     }
 
     None

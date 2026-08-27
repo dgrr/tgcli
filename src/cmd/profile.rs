@@ -74,7 +74,7 @@ pub async fn run(cli: &Cli, cmd: &ProfileCommand) -> Result<()> {
             };
 
             let profile = ProfileInfo {
-                id: me.bare_id(),
+                id: me.id().bare_id().unwrap_or(0),
                 first_name: me.first_name().unwrap_or("").to_string(),
                 last_name: me.last_name().map(|s| s.to_string()),
                 username: me.username().map(|s| s.to_string()),

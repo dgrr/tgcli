@@ -4,7 +4,7 @@ use crate::out::markdown::{ToMarkdown, UserInfoMd};
 use crate::Cli;
 use anyhow::{Context, Result};
 use clap::Subcommand;
-use grammers_session::defs::{PeerId, PeerRef};
+use grammers_session::types::PeerId;
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use serde::Serialize;
@@ -221,23 +221,22 @@ async fn block_user(cli: &Cli, user_id: i64, block: bool) -> Result<()> {
 
 /// Resolve a user ID to an InputUser for API calls.
 async fn resolve_user_to_input_user(app: &App, user_id: i64) -> Result<tl::enums::InputUser> {
-    // First check session for the user's access_hash
-    let user_peer_id = PeerId::user(user_id);
-    if let Some(info) = app.tg.session.peer(user_peer_id) {
-        let peer_ref = PeerRef {
-            id: user_peer_id,
-            auth: info.auth(),
-        };
-        // PeerRef has From<PeerRef> for tl::enums::InputUser
-        return Ok(peer_ref.into());
+    // First check session for the user's access_hash. `peer_ref` yields `None`
+    // for peers cached without usable auth, so those fall through to the
+    // dialog scan below instead of producing a zeroed access_hash.
+    if let Some(user_peer_id) = PeerId::user(user_id) {
+        if let Some(peer_ref) = app.tg.session.peer_ref(user_peer_id).await? {
+            // PeerRef has From<PeerRef> for tl::enums::InputUser
+            return Ok(peer_ref.into());
+        }
     }
 
     // Try to find user in dialogs
     let mut dialogs = app.tg.client.iter_dialogs();
     while let Some(dialog) = dialogs.next().await? {
         let peer = dialog.peer();
-        if peer.id().bare_id() == user_id {
-            let peer_ref = PeerRef::from(peer);
+        if peer.id().bare_id() == Some(user_id) {
+            let peer_ref = crate::tg::peer_to_ref_async(peer).await?;
             return Ok(peer_ref.into());
         }
     }
@@ -250,22 +249,21 @@ async fn resolve_user_to_input_user(app: &App, user_id: i64) -> Result<tl::enums
 
 /// Resolve a user ID to an InputPeer for API calls.
 async fn resolve_user_to_input_peer(app: &App, user_id: i64) -> Result<tl::enums::InputPeer> {
-    // First check session for the user's access_hash
-    let user_peer_id = PeerId::user(user_id);
-    if let Some(info) = app.tg.session.peer(user_peer_id) {
-        let peer_ref = PeerRef {
-            id: user_peer_id,
-            auth: info.auth(),
-        };
-        return Ok(peer_ref.into());
+    // First check session for the user's access_hash. `peer_ref` yields `None`
+    // for peers cached without usable auth, so those fall through to the
+    // dialog scan below instead of producing a zeroed access_hash.
+    if let Some(user_peer_id) = PeerId::user(user_id) {
+        if let Some(peer_ref) = app.tg.session.peer_ref(user_peer_id).await? {
+            return Ok(peer_ref.into());
+        }
     }
 
     // Try to find user in dialogs
     let mut dialogs = app.tg.client.iter_dialogs();
     while let Some(dialog) = dialogs.next().await? {
         let peer = dialog.peer();
-        if peer.id().bare_id() == user_id {
-            return Ok(PeerRef::from(peer).into());
+        if peer.id().bare_id() == Some(user_id) {
+            return Ok(crate::tg::peer_to_ref_async(peer).await?.into());
         }
     }
 

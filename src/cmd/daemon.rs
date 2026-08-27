@@ -12,8 +12,9 @@ use crate::Cli;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Args;
-use grammers_client::types::Peer;
-use grammers_client::{Update, UpdatesConfiguration};
+use grammers_client::client::UpdatesConfiguration;
+use grammers_client::peer::Peer;
+use grammers_client::update::Update;
 use grammers_tl_types as tl;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -46,14 +47,17 @@ pub struct DaemonArgs {
     pub stream: bool,
 }
 
-/// Extract chat_id from a Peer
-fn extract_chat_id_from_peer(peer: &Peer) -> i64 {
+/// Extract chat_id from a Peer.
+///
+/// `None` only for the self-user placeholder, which never reaches us here, but
+/// the chat_id is a database key so we skip rather than invent one.
+fn extract_chat_id_from_peer(peer: &Peer) -> Option<i64> {
     peer.id().bare_id()
 }
 
 /// Extract sender_id from a Message update
-fn extract_sender_id(msg: &grammers_client::types::update::Message) -> i64 {
-    msg.sender().map(|s| s.id().bare_id()).unwrap_or(0)
+fn extract_sender_id(msg: &grammers_client::message::Message) -> i64 {
+    msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0)
 }
 
 /// Extract topic_id from a raw update if present
@@ -98,11 +102,11 @@ fn chat_name_from_peer(peer: &Peer) -> String {
         Peer::User(u) => u
             .first_name()
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("User {}", u.bare_id())),
+            .unwrap_or_else(|| format!("User {}", u.id().bare_id().unwrap_or(0))),
         Peer::Group(g) => g
             .title()
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("Group {}", g.id().bare_id())),
+            .unwrap_or_else(|| format!("Group {}", g.id().bare_id().unwrap_or(0))),
         Peer::Channel(c) => c.title().to_string(),
     }
 }
@@ -166,13 +170,18 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
 
     // Start the update stream - this subscribes to updates immediately
     // catch_up: true means it will also fetch any missed updates since last session
-    let mut update_stream = app.tg.client.stream_updates(
-        updates_rx,
-        UpdatesConfiguration {
-            catch_up: !args.no_backfill, // Catch up on missed updates if backfill enabled
-            ..Default::default()
-        },
-    );
+    let mut update_stream = app
+        .tg
+        .client
+        .stream_updates(
+            updates_rx,
+            UpdatesConfiguration {
+                catch_up: !args.no_backfill, // Catch up on missed updates if backfill enabled
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to start update stream: {e}"))?;
 
     // Spawn background sync task if backfill is enabled
     let backfill_handle = if !args.no_backfill {
@@ -271,14 +280,17 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                             Update::NewMessage(msg) => {
                                 // Get the peer (chat) from the message
                                 let peer = match msg.peer() {
-                                    Ok(p) => p.clone(),
-                                    Err(_) => {
+                                    Some(p) => p.clone(),
+                                    None => {
                                         log::warn!("Could not resolve peer for message {}", msg.id());
                                         continue;
                                     }
                                 };
 
-                                let chat_id = extract_chat_id_from_peer(&peer);
+                                let Some(chat_id) = extract_chat_id_from_peer(&peer) else {
+                                    log::warn!("Could not resolve chat id for message {}", msg.id());
+                                    continue;
+                                };
                                 let chat_kind = chat_kind_from_peer(&peer);
 
                                 // Check ignore filters
@@ -372,14 +384,20 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
                             Update::MessageEdited(msg) => {
                                 // Get the peer (chat) from the message
                                 let peer = match msg.peer() {
-                                    Ok(p) => p,
-                                    Err(_) => {
+                                    Some(p) => p,
+                                    None => {
                                         log::warn!("Could not resolve peer for edited message {}", msg.id());
                                         continue;
                                     }
                                 };
 
-                                let chat_id = extract_chat_id_from_peer(peer);
+                                let Some(chat_id) = extract_chat_id_from_peer(peer) else {
+                                    log::warn!(
+                                        "Could not resolve chat id for edited message {}",
+                                        msg.id()
+                                    );
+                                    continue;
+                                };
 
                                 // Check ignore filters
                                 if ignore_set.contains(&chat_id) {
@@ -470,7 +488,10 @@ pub async fn run(cli: &Cli, args: &DaemonArgs) -> Result<()> {
     if !args.quiet {
         eprintln!("Syncing session state...");
     }
-    update_stream.sync_update_state();
+    update_stream
+        .sync_update_state()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to sync update state: {e}"))?;
 
     if !args.quiet {
         eprintln!(

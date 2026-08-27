@@ -4,10 +4,10 @@ use crate::store::UpsertMessageParams;
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
+use grammers_client::media::Attribute;
+use grammers_client::message::InputMessage;
 use grammers_client::parsers::{parse_html_message, parse_markdown_message};
-use grammers_client::types::Attribute;
-use grammers_client::InputMessage;
-use grammers_session::defs::PeerRef;
+use grammers_session::types::PeerRef;
 use grammers_tl_types as tl;
 use rand::Rng;
 use std::path::Path;
@@ -140,11 +140,13 @@ impl App {
             reply_markup: None,
             entities,
             schedule_date: Some(schedule_date),
+            schedule_repeat_period: None,
             send_as: None,
             quick_reply_shortcut: None,
             effect: None,
             allow_paid_stars: None,
             suggested_post: None,
+            rich_message: None,
         };
 
         let updates = self
@@ -195,6 +197,7 @@ impl App {
                     quote_offset: None,
                     monoforum_peer_id: None,
                     todo_item_id: None,
+                    poll_option: None,
                 }
                 .into(),
             ),
@@ -203,11 +206,13 @@ impl App {
             reply_markup: None,
             entities,
             schedule_date: None,
+            schedule_repeat_period: None,
             send_as: None,
             quick_reply_shortcut: None,
             effect: None,
             allow_paid_stars: None,
             suggested_post: None,
+            rich_message: None,
         };
 
         let updates = self
@@ -280,6 +285,7 @@ impl App {
                     quote_offset: None,
                     monoforum_peer_id: None,
                     todo_item_id: None,
+                    poll_option: None,
                 }
                 .into(),
             ),
@@ -288,11 +294,13 @@ impl App {
             reply_markup: None,
             entities,
             schedule_date: None,
+            schedule_repeat_period: None,
             send_as: None,
             quick_reply_shortcut: None,
             effect: None,
             allow_paid_stars: None,
             suggested_post: None,
+            rich_message: None,
         };
 
         let updates = self
@@ -427,7 +435,9 @@ impl App {
             reply_markup: None,
             entities: None,
             schedule_date: None,
+            schedule_repeat_period: None,
             quick_reply_shortcut_id: None,
+            rich_message: None,
         };
 
         self.tg.client.invoke(&request).await.context(format!(
@@ -475,8 +485,10 @@ impl App {
             to_peer: to_input_peer,
             top_msg_id: to_topic_id,
             schedule_date: None,
+            schedule_repeat_period: None,
             send_as: None,
             quick_reply_shortcut: None,
+            effect: None,
             video_timestamp: None,
             allow_paid_stars: None,
             reply_to: None,
@@ -859,8 +871,8 @@ impl App {
         let mut dialogs = self.tg.client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
-            if peer.id().bare_id() == chat_id {
-                return Ok(PeerRef::from(peer));
+            if peer.id().bare_id() == Some(chat_id) {
+                return crate::tg::peer_to_ref_async(peer).await;
             }
         }
         anyhow::bail!(
@@ -932,7 +944,7 @@ impl App {
                 continue;
             }
 
-            let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+            let sender_id = msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
             let from_me = msg.outgoing();
             let text = msg.text().to_string();
             let reply_to_id = msg.reply_to_message_id().map(|id| id as i64);
@@ -997,6 +1009,9 @@ impl App {
                         entities: vec![],
                     }),
                     option: vec![i as u8], // Use index as option identifier
+                    media: None,
+                    added_by: None,
+                    date: None,
                 })
             })
             .collect();
@@ -1008,6 +1023,12 @@ impl App {
             public_voters,
             multiple_choice,
             quiz: false,
+            open_answers: false,
+            revoting_disabled: false,
+            shuffle_answers: false,
+            hide_results_until_close: false,
+            creator: false,
+            subscribers_only: false,
             question: tl::enums::TextWithEntities::Entities(tl::types::TextWithEntities {
                 text: question.to_string(),
                 entities: vec![],
@@ -1015,15 +1036,19 @@ impl App {
             answers,
             close_period: None,
             close_date: None,
+            countries_iso2: None,
+            hash: 0,
         });
 
         // Create InputMediaPoll
-        let input_media = tl::enums::InputMedia::Poll(tl::types::InputMediaPoll {
+        let input_media = tl::enums::InputMedia::Poll(Box::new(tl::types::InputMediaPoll {
             poll,
             correct_answers: None,
+            attached_media: None,
             solution: None,
             solution_entities: None,
-        });
+            solution_media: None,
+        }));
 
         let random_id: i64 = rand::rng().random();
 
@@ -1043,6 +1068,7 @@ impl App {
             reply_markup: None,
             entities: None,
             schedule_date: None,
+            schedule_repeat_period: None,
             send_as: None,
             quick_reply_shortcut: None,
             effect: None,
@@ -1200,6 +1226,8 @@ impl App {
             send_voices: true,
             send_docs: true,
             send_plain: true,
+            edit_rank: true,
+            send_reactions: true,
             until_date,
         };
 
@@ -1244,6 +1272,8 @@ impl App {
             send_voices: true,
             send_docs: true,
             send_plain: true,
+            edit_rank: true,
+            send_reactions: true,
             until_date: 0, // Permanent ban first
         };
 
@@ -1280,6 +1310,8 @@ impl App {
             send_voices: false,
             send_docs: false,
             send_plain: false,
+            edit_rank: false,
+            send_reactions: false,
             until_date: 0,
         };
 
@@ -1327,6 +1359,8 @@ impl App {
             send_voices: false,
             send_docs: false,
             send_plain: false,
+            edit_rank: false,
+            send_reactions: false,
             until_date: 0,
         };
 
@@ -1372,13 +1406,14 @@ impl App {
             edit_stories: false,
             delete_stories: false,
             manage_direct_messages: false,
+            manage_ranks: false,
         };
 
         let request = tl::functions::channels::EditAdmin {
             channel: channel_peer,
             user_id: user_peer,
             admin_rights: tl::enums::ChatAdminRights::Rights(admin_rights),
-            rank: title.unwrap_or("Admin").to_string(),
+            rank: Some(title.unwrap_or("Admin").to_string()),
         };
 
         self.tg.client.invoke(&request).await.context(format!(
@@ -1412,13 +1447,14 @@ impl App {
             edit_stories: false,
             delete_stories: false,
             manage_direct_messages: false,
+            manage_ranks: false,
         };
 
         let request = tl::functions::channels::EditAdmin {
             channel: channel_peer,
             user_id: user_peer,
             admin_rights: tl::enums::ChatAdminRights::Rights(admin_rights),
-            rank: String::new(),
+            rank: None,
         };
 
         self.tg.client.invoke(&request).await.context(format!(
@@ -1435,8 +1471,8 @@ impl App {
         let mut dialogs = self.tg.client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
-            if peer.id().bare_id() == chat_id {
-                let peer_ref = PeerRef::from(peer);
+            if peer.id().bare_id() == Some(chat_id) {
+                let peer_ref = crate::tg::peer_to_ref_async(peer).await?;
                 if let tl::enums::InputPeer::Channel(ch) = tl::enums::InputPeer::from(peer_ref) {
                     return Ok(tl::enums::InputChannel::Channel(tl::types::InputChannel {
                         channel_id: ch.channel_id,
@@ -1458,8 +1494,8 @@ impl App {
         let mut dialogs = self.tg.client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
-            if peer.id().bare_id() == user_id {
-                let peer_ref = PeerRef::from(peer);
+            if peer.id().bare_id() == Some(user_id) {
+                let peer_ref = crate::tg::peer_to_ref_async(peer).await?;
                 if let tl::enums::InputPeer::User(u) = tl::enums::InputPeer::from(peer_ref) {
                     return Ok(tl::enums::InputUser::User(tl::types::InputUser {
                         user_id: u.user_id,
@@ -1479,6 +1515,8 @@ impl App {
     /// Returns a list of matching chats (users, groups, channels).
     pub async fn search_chats(&self, query: &str, limit: usize) -> Result<Vec<SearchChatResult>> {
         let request = tl::functions::contacts::Search {
+            broadcasts: false,
+            bots: false,
             q: query.to_string(),
             limit: limit as i32,
         };
@@ -1548,8 +1586,8 @@ impl App {
         let mut dialogs = self.tg.client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
-            if peer.id().bare_id() == user_id {
-                let peer_ref = PeerRef::from(peer);
+            if peer.id().bare_id() == Some(user_id) {
+                let peer_ref = crate::tg::peer_to_ref_async(peer).await?;
                 return Ok(tl::enums::InputPeer::from(peer_ref));
             }
         }
@@ -1582,7 +1620,7 @@ impl App {
                 }
                 count += 1;
 
-                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let sender_id = msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
                 let from_me = msg.outgoing();
 
                 results.push(crate::store::Message {
@@ -1611,9 +1649,9 @@ impl App {
                 }
                 count += 1;
 
-                let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+                let sender_id = msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
                 let from_me = msg.outgoing();
-                let msg_chat_id = msg.peer_id().bare_id();
+                let msg_chat_id = msg.peer_id().bare_id().unwrap_or(0);
 
                 results.push(crate::store::Message {
                     id: msg.id() as i64,
@@ -1799,12 +1837,20 @@ impl App {
             let hash = extract_invite_hash(invite_link)?;
 
             let request = tl::functions::messages::ImportChatInvite { hash };
-            let updates = self
+            let join_result = self
                 .tg
                 .client
                 .invoke(&request)
                 .await
                 .context("Failed to join chat via invite link")?;
+
+            // ImportChatInvite now returns ChatInviteJoinResult; the Ok variant carries the updates.
+            let updates = match join_result {
+                tl::enums::messages::ChatInviteJoinResult::Ok(ok) => ok.updates,
+                tl::enums::messages::ChatInviteJoinResult::WebView(_) => {
+                    anyhow::bail!("Invite link requires a web view to join")
+                }
+            };
 
             // Extract chat info from updates
             extract_chat_from_updates(&updates)
@@ -1824,7 +1870,7 @@ impl App {
                 peer.ok_or_else(|| anyhow::anyhow!("Username '{}' not found", clean_username))?;
 
             // Join the chat
-            let peer_ref = PeerRef::from(&peer);
+            let peer_ref = crate::tg::peer_to_ref_async(&peer).await?;
             let input_peer: tl::enums::InputPeer = peer_ref.into();
 
             // Determine if it's a channel/supergroup or a basic chat
@@ -1851,17 +1897,17 @@ impl App {
 
             // Return info about the joined chat
             let (kind, name) = match &peer {
-                grammers_client::types::Peer::Channel(ch) => {
+                grammers_client::peer::Peer::Channel(ch) => {
                     ("channel".to_string(), ch.title().to_string())
                 }
-                grammers_client::types::Peer::Group(g) => {
+                grammers_client::peer::Peer::Group(g) => {
                     ("group".to_string(), g.title().unwrap_or("").to_string())
                 }
-                grammers_client::types::Peer::User(u) => ("user".to_string(), u.full_name()),
+                grammers_client::peer::Peer::User(u) => ("user".to_string(), u.full_name()),
             };
 
             Ok(JoinChatResult {
-                id: peer.id().bare_id(),
+                id: peer.id().bare_id().unwrap_or(0),
                 kind,
                 name,
             })
@@ -2051,7 +2097,6 @@ impl App {
         msg_id: i64,
         output_path: Option<&str>,
     ) -> Result<DownloadResult> {
-        use grammers_client::types::Downloadable;
         use std::io::Write;
 
         let peer_ref = self.resolve_peer_ref(chat_id).await?;
@@ -2244,6 +2289,7 @@ impl App {
             media: None,
             effect: None,
             suggested_post: None,
+            rich_message: None,
         };
 
         self.tg
@@ -2324,19 +2370,20 @@ fn extract_chat_from_updates(updates: &tl::enums::Updates) -> Result<JoinChatRes
 }
 
 /// Get filename and extension for media
-fn get_media_filename(media: &grammers_client::types::Media, msg_id: i64) -> (String, String) {
-    use grammers_client::types::Media;
+fn get_media_filename(media: &grammers_client::media::Media, msg_id: i64) -> (String, String) {
+    use grammers_client::media::Media;
 
     match media {
         Media::Photo(_) => (format!("photo_{}", msg_id), "jpg".to_string()),
         Media::Document(doc) => {
-            // Try to get original filename
-            if !doc.name().is_empty() {
-                let name = doc.name();
-                if let Some(pos) = name.rfind('.') {
-                    return (name[..pos].to_string(), name[pos + 1..].to_string());
+            // Try to get original filename (name() is now Option<&str>)
+            if let Some(name) = doc.name() {
+                if !name.is_empty() {
+                    if let Some(pos) = name.rfind('.') {
+                        return (name[..pos].to_string(), name[pos + 1..].to_string());
+                    }
+                    return (name.to_string(), "bin".to_string());
                 }
-                return (name.to_string(), "bin".to_string());
             }
 
             // Determine extension from mime type
@@ -2401,8 +2448,8 @@ fn media_mime_to_ext(mime: &str) -> String {
 }
 
 /// Get media type string from Media enum
-fn get_media_type(media: &grammers_client::types::Media) -> String {
-    use grammers_client::types::Media;
+fn get_media_type(media: &grammers_client::media::Media) -> String {
+    use grammers_client::media::Media;
 
     match media {
         Media::Photo(_) => "photo".to_string(),

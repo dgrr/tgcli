@@ -176,7 +176,7 @@ async fn fetch_messages_from_api(
             }
         }
 
-        let sender_id = msg.sender().map(|s| s.id().bare_id()).unwrap_or(0);
+        let sender_id = msg.sender().and_then(|s| s.id().bare_id()).unwrap_or(0);
         let from_me = msg.outgoing();
 
         messages.push(ExportMessage {
@@ -489,14 +489,12 @@ fn parse_date(s: &str) -> Result<DateTime<Utc>> {
     )
 }
 
-async fn resolve_peer_ref(app: &App, chat_id: i64) -> Result<grammers_session::defs::PeerRef> {
-    use grammers_session::defs::PeerRef;
-
+async fn resolve_peer_ref(app: &App, chat_id: i64) -> Result<grammers_session::types::PeerRef> {
     let mut dialogs = app.tg.client.iter_dialogs();
     while let Some(dialog) = dialogs.next().await? {
         let peer = dialog.peer();
-        if peer.id().bare_id() == chat_id {
-            return Ok(PeerRef::from(peer));
+        if peer.id().bare_id() == Some(chat_id) {
+            return crate::tg::peer_to_ref_async(peer).await;
         }
     }
     anyhow::bail!(

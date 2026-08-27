@@ -4,7 +4,7 @@ use crate::out::markdown::{format_folder_chats, format_folders, FolderChatMd, Fo
 use crate::Cli;
 use anyhow::Result;
 use clap::Subcommand;
-use grammers_session::defs::{PeerId, PeerRef};
+use grammers_session::types::PeerId;
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use serde::Serialize;
@@ -802,34 +802,19 @@ async fn resolve_chat_to_input_peer(app: &App, chat_id: i64) -> Result<tl::enums
     // First check local store for chat info
     let chat: Option<crate::store::Chat> = app.get_store().await?.get_chat(chat_id).await?;
 
-    // Try to find via session
-    let channel_peer_id = PeerId::channel(chat_id);
-    if let Some(info) = app.tg.session.peer(channel_peer_id) {
-        let peer_ref = PeerRef {
-            id: channel_peer_id,
-            auth: info.auth(),
-        };
-        return Ok(peer_ref.into());
-    }
-
-    // Try as user
-    let user_peer_id = PeerId::user(chat_id);
-    if let Some(info) = app.tg.session.peer(user_peer_id) {
-        let peer_ref = PeerRef {
-            id: user_peer_id,
-            auth: info.auth(),
-        };
-        return Ok(peer_ref.into());
-    }
-
-    // Try as small group chat
-    if chat_id > 0 && chat_id <= 999999999999 {
-        let chat_peer_id = PeerId::chat(chat_id);
-        if let Some(info) = app.tg.session.peer(chat_peer_id) {
-            let peer_ref = PeerRef {
-                id: chat_peer_id,
-                auth: info.auth(),
-            };
+    // Try the session cache as a channel, then a user, then a small group chat.
+    // `peer_ref` yields `None` for peers cached without usable auth, so those
+    // fall through to the dialog scan below rather than producing a `PeerRef`
+    // with a zeroed access_hash.
+    for peer_id in [
+        PeerId::channel(chat_id),
+        PeerId::user(chat_id),
+        PeerId::chat(chat_id),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(peer_ref) = app.tg.session.peer_ref(peer_id).await? {
             return Ok(peer_ref.into());
         }
     }
@@ -839,8 +824,8 @@ async fn resolve_chat_to_input_peer(app: &App, chat_id: i64) -> Result<tl::enums
         let mut dialogs = app.tg.client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await? {
             let peer = dialog.peer();
-            if peer.id().bare_id() == chat_id {
-                return Ok(PeerRef::from(peer).into());
+            if peer.id().bare_id() == Some(chat_id) {
+                return Ok(crate::tg::peer_to_ref_async(peer).await?.into());
             }
         }
     }
