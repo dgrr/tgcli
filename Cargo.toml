@@ -16,10 +16,10 @@ name = "tgcli"
 path = "src/main.rs"
 
 [dependencies]
-grammers-client = { version = "0.8", features = ["fs", "markdown", "html"] }
-grammers-session = "0.8"
-grammers-tl-types = "0.8"
-grammers-mtsender = "0.8"
+grammers-client = { version = "0.10", features = ["fs", "markdown", "html"] }
+grammers-session = "0.10"
+grammers-tl-types = "0.10"
+grammers-mtsender = "0.10"
 turso = "0.4"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"

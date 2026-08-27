@@ -2,10 +2,10 @@ pub mod send;
 pub mod sync;
 
 use crate::store::Store;
-use crate::tg::TgClient;
+use crate::tg::{peer_to_ref_async, TgClient};
 use crate::Cli;
 use anyhow::{Context, Result};
-use grammers_session::defs::PeerRef;
+use grammers_session::types::PeerRef;
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types as tl;
 use tokio::sync::mpsc;
@@ -34,6 +34,7 @@ impl App {
         // SqliteSession::open creates the file if it doesn't exist
 
         let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)
+            .await
             .context("Failed to connect to Telegram")?;
 
         if !tg
@@ -62,6 +63,7 @@ impl App {
         let session_path = format!("{}/session.db", store_dir);
 
         let (tg, updates_rx) = TgClient::connect_with_updates(&session_path)
+            .await
             .context("Failed to connect to Telegram")?;
         Ok(App {
             tg,
@@ -137,8 +139,8 @@ impl App {
             format!("Failed to iterate dialogs while resolving chat {}", chat_id)
         })? {
             let peer = dialog.peer();
-            if peer.id().bare_id() == chat_id {
-                return Ok(PeerRef::from(peer));
+            if peer.id().bare_id() == Some(chat_id) {
+                return peer_to_ref_async(peer).await;
             }
         }
         anyhow::bail!(

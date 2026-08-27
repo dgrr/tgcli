@@ -4,7 +4,7 @@ use crate::store::Store;
 use crate::Cli;
 use anyhow::Result;
 use clap::{ArgAction, Subcommand};
-use grammers_session::defs::{PeerAuth, PeerId, PeerRef};
+use grammers_session::types::{PeerAuth, PeerId, PeerRef};
 use grammers_session::Session;
 use grammers_tl_types as tl;
 use serde::Serialize;
@@ -229,8 +229,8 @@ fn format_user_status(status: &tl::enums::UserStatus) -> String {
     }
 }
 
-fn format_role(role: &grammers_client::types::Role) -> String {
-    use grammers_client::types::Role;
+fn format_role(role: &grammers_client::peer::Role) -> String {
+    use grammers_client::peer::Role;
     match role {
         Role::User(_) => "member".to_string(),
         Role::Creator(_) => "creator".to_string(),
@@ -361,7 +361,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             let peer_ref = if let Some(ref username) = chat_username {
                 // Resolve via username
                 match app.tg.client.resolve_username(username).await? {
-                    Some(peer) => PeerRef::from(peer),
+                    Some(peer) => crate::tg::peer_to_ref_async(&peer).await?,
                     None => {
                         anyhow::bail!("Could not resolve username @{}. The username may not exist or may be misspelled.", username);
                     }
@@ -369,31 +369,27 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             } else {
                 // Try to get from session, fall back to trying different ID types
                 let channel_peer_id = PeerId::channel(*id);
-                let chat_peer_id = if *id > 0 && *id <= 999999999999 {
-                    Some(PeerId::chat(*id))
-                } else {
-                    None
+                let chat_peer_id = PeerId::chat(*id);
+
+                // Check session for the channel first. `peer_ref` yields `None`
+                // when the peer is absent or cached without usable auth.
+                let cached = match channel_peer_id {
+                    Some(peer_id) => app.tg.session.peer_ref(peer_id).await?,
+                    None => None,
                 };
 
-                // Check session for channel first
-                if let Some(info) = app.tg.session.peer(channel_peer_id) {
-                    PeerRef {
-                        id: channel_peer_id,
-                        auth: info.auth(),
-                    }
-                } else if let Some(chat_id) = chat_peer_id {
-                    // Try as small group chat (no access_hash needed)
-                    PeerRef {
-                        id: chat_id,
-                        auth: PeerAuth::default(),
-                    }
-                } else {
-                    // Last resort: try channel with no access_hash
-                    // This will likely fail but provides a clear error
-                    PeerRef {
-                        id: channel_peer_id,
-                        auth: PeerAuth::default(),
-                    }
+                match cached {
+                    Some(peer_ref) => peer_ref,
+                    // Try as a small group chat (no access_hash needed), then
+                    // fall back to the channel with no access_hash. The latter
+                    // will likely fail, but it produces a clear error.
+                    None => match chat_peer_id.or(channel_peer_id) {
+                        Some(id) => PeerRef {
+                            id,
+                            auth: PeerAuth::default(),
+                        },
+                        None => anyhow::bail!("Invalid peer ID: {}", id),
+                    },
                 }
             };
 
@@ -405,7 +401,7 @@ pub async fn run(cli: &Cli, cmd: &ChatsCommand) -> Result<()> {
             while let Some(participant) = participants.next().await? {
                 let user = &participant.user;
                 let member = MemberInfo {
-                    id: user.bare_id(),
+                    id: user.id().bare_id().unwrap_or(0),
                     username: user.username().map(|s| s.to_string()),
                     first_name: user.first_name().map(|s| s.to_string()),
                     last_name: user.last_name().map(|s| s.to_string()),
@@ -1102,34 +1098,19 @@ async fn batch_pin(cli: &Cli, chat_ids: &[i64], pin: bool, folder_id: i32) -> Re
 
 /// Resolve a chat ID to an InputPeer
 async fn resolve_chat_to_input_peer(app: &App, chat_id: i64) -> Result<tl::enums::InputPeer> {
-    // First check session for channel
-    let channel_peer_id = PeerId::channel(chat_id);
-    if let Some(info) = app.tg.session.peer(channel_peer_id) {
-        let peer_ref = PeerRef {
-            id: channel_peer_id,
-            auth: info.auth(),
-        };
-        return Ok(peer_ref.into());
-    }
-
-    // Try as user
-    let user_peer_id = PeerId::user(chat_id);
-    if let Some(info) = app.tg.session.peer(user_peer_id) {
-        let peer_ref = PeerRef {
-            id: user_peer_id,
-            auth: info.auth(),
-        };
-        return Ok(peer_ref.into());
-    }
-
-    // Try as small group chat
-    if chat_id > 0 && chat_id <= 999999999999 {
-        let chat_peer_id = PeerId::chat(chat_id);
-        if let Some(info) = app.tg.session.peer(chat_peer_id) {
-            let peer_ref = PeerRef {
-                id: chat_peer_id,
-                auth: info.auth(),
-            };
+    // Try the session cache as a channel, then a user, then a small group chat.
+    // `peer_ref` yields `None` for peers cached without usable auth, so those
+    // fall through to the dialog scan below rather than producing a `PeerRef`
+    // with a zeroed access_hash.
+    for peer_id in [
+        PeerId::channel(chat_id),
+        PeerId::user(chat_id),
+        PeerId::chat(chat_id),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(peer_ref) = app.tg.session.peer_ref(peer_id).await? {
             return Ok(peer_ref.into());
         }
     }
@@ -1138,8 +1119,8 @@ async fn resolve_chat_to_input_peer(app: &App, chat_id: i64) -> Result<tl::enums
     let mut dialogs = app.tg.client.iter_dialogs();
     while let Some(dialog) = dialogs.next().await? {
         let peer = dialog.peer();
-        if peer.id().bare_id() == chat_id {
-            return Ok(PeerRef::from(peer).into());
+        if peer.id().bare_id() == Some(chat_id) {
+            return Ok(crate::tg::peer_to_ref_async(peer).await?.into());
         }
     }
 
